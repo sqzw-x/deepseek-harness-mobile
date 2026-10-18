@@ -160,4 +160,47 @@ class ToolGroupsTest {
         assertEquals(groupToolRows(listOf(thinking(1))).first().seq, groupToolRows(listOf(thinking(1), call(2))).first().seq)
         assertTrue(groupToolRows(emptyList()).isEmpty())
     }
+
+    // ---- What counts as still running ------------------------------------------
+
+    private fun result(seq: Long, callId: String) = ToolResultNode(seq, callId, JsonNull, false, 1, 1)
+
+    @Test fun `a settled thought is not a live run`() {
+        // The bug this pins: a run whose tail is a finished thought said "thinking…" for the rest of
+        // the turn, dots still moving.
+        assertFalse(runIsLive(listOf(thinking(1)), emptyMap(), running = true))
+    }
+
+    @Test fun `a thought still arriving keeps the run live`() {
+        val live = AssistantMessageNode(1, "a", 1, 1, listOf(ChatBlock("reasoning", "partial")), streaming = true)
+        assertTrue(runIsLive(listOf(live), emptyMap(), running = true))
+    }
+
+    @Test fun `a call without a result keeps the run live`() {
+        assertTrue(runIsLive(listOf(call(1)), emptyMap(), running = true))
+    }
+
+    @Test fun `a call with a result is settled`() {
+        assertFalse(runIsLive(listOf(call(1)), mapOf("c1" to result(2, "c1")), running = true))
+    }
+
+    @Test fun `a finished turn is never live`() {
+        assertFalse(runIsLive(listOf(call(1)), emptyMap(), running = false))
+    }
+
+    @Test fun `a retry keeps the run live`() {
+        assertTrue(runIsLive(listOf(call(1), RetryNode(2, "llm/retry", JsonNull)), emptyMap(), running = true))
+    }
+
+    @Test fun `the split thought is settled and the answer it came from is not`() {
+        val both = AssistantMessageNode(
+            1, "a", 1, 1,
+            listOf(ChatBlock("reasoning", "hmm"), ChatBlock("text", "here")),
+            streaming = true,
+        )
+        val (thought, answer) = splitReasoning(listOf(both))
+        assertFalse((thought as AssistantMessageNode).streaming)
+        assertTrue((answer as AssistantMessageNode).streaming)
+        assertFalse(runIsLive(listOf(thought), emptyMap(), running = true))
+    }
 }

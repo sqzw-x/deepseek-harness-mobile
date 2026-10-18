@@ -90,7 +90,11 @@ internal fun splitReasoning(nodes: List<ChatNode>): List<ChatNode> = nodes.flatM
     if (node !is AssistantMessageNode) return@flatMap listOf(node)
     val (thoughts, answer) = node.blocks.partition { it.kind == "reasoning" && !it.text.isNullOrBlank() }
     if (thoughts.isEmpty() || !answer.any { it.isAnswerContent() }) return@flatMap listOf(node)
-    listOf(node.copy(seq = -node.seq, blocks = thoughts), node.copy(blocks = answer))
+    // The thought is settled by construction: a later block of the same message already followed it.
+    listOf(
+        node.copy(seq = -node.seq, blocks = thoughts, streaming = false),
+        node.copy(blocks = answer),
+    )
 }
 
 /**
@@ -187,6 +191,25 @@ internal fun groupToolRows(nodes: List<ChatNode>): List<TranscriptRow> {
 }
 
 /**
+ * Whether a run still has work in flight.
+ *
+ * Only the tail can be unfinished: an earlier step that never settled would have ended the turn. A
+ * call is unfinished while it has no result, and a message while it is *still arriving*. A thought
+ * that already settled is work that finished — narrating it as "thinking…" left a finished run
+ * looking stuck for as long as the turn lasted, which is exactly what a settled reasoning tail does.
+ */
+internal fun runIsLive(items: List<ChatNode>, results: Map<String, ToolResultNode>, running: Boolean): Boolean {
+    if (!running) return false
+    return when (val tail = items.lastOrNull()) {
+        is ToolCallNode -> tail.callId !in results
+        is AssistantMessageNode -> tail.streaming
+        // A retry is a wait, not a stall: the provider answered, and the same call goes out again.
+        is RetryNode -> true
+        else -> false
+    }
+}
+
+/**
  * One run of work, as a single line until the reader asks for more.
  *
  * Collapsed is the default and stays the default: the model can think and call tools for minutes,
@@ -203,11 +226,8 @@ internal fun ActivityGroupRow(items: List<ChatNode>, context: ChatNodeContext) {
         node.blocks.count { it.kind == "reasoning" && !it.text.isNullOrBlank() }
     }
     val failed = calls.count { results[it.callId]?.isError == true }
-    // The run is live while the last step has not settled: a call with no result, or reasoning that
-    // is still arriving. Only the tail can be unfinished — an earlier step that never settled would
-    // have ended the turn.
     val runningCall = (items.last() as? ToolCallNode)?.takeIf { it.callId !in results }
-    val running = context.running && (runningCall != null || items.last() is AssistantMessageNode)
+    val running = runIsLive(items, results, context.running)
     val starts = items.mapNotNull { context.eventTimes[it.seq] }
     val ends = calls.mapNotNull { results[it.callId]?.let { r -> context.eventTimes[r.seq] } }
     val elapsed = if (starts.isNotEmpty() && ends.isNotEmpty()) (ends.max() - starts.min()).coerceAtLeast(0) else null
@@ -254,7 +274,14 @@ internal fun ActivityGroupRow(items: List<ChatNode>, context: ChatNodeContext) {
                 // names the phase, which is the part that answers "is it stuck?".
                 Text(
                     stringResource(
-                        if (runningCall != null) R.string.chat_activity_running_tool else R.string.chat_thinking,
+                        when {
+                            runningCall != null -> R.string.chat_activity_running_tool
+                            // A retry is neither thinking nor a tool: it is the wait before the same
+                            // call goes out again, and saying so is what keeps a backoff from
+                            // reading as a stall.
+                            items.last() is RetryNode -> R.string.chat_retrying
+                            else -> R.string.chat_thinking
+                        },
                     ),
                     style = DsType.caption11,
                     color = colors.accent,
