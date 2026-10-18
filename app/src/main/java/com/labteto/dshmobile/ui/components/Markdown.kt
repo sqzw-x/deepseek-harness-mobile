@@ -68,7 +68,9 @@ import androidx.compose.ui.res.stringResource
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.ui.theme.Ds
 import com.labteto.dshmobile.core.markdown.safeHttpUrl
+import com.labteto.dshmobile.core.markdown.InlineSegment
 import com.labteto.dshmobile.core.markdown.MdBlock
+import com.labteto.dshmobile.core.markdown.parseInlineSegments
 import com.labteto.dshmobile.core.markdown.parseMarkdown
 import androidx.compose.ui.text.style.TextDecoration
 import kotlin.math.pow
@@ -132,6 +134,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                 )
                                 is MdBlock.Blockquote -> MdBlockquote(block)
                 is MdBlock.Code -> CodeBlock(block.lang, block.code)
+                is MdBlock.Math -> MathBlock(block.tex)
                 is MdBlock.HorizontalRule -> HorizontalRuleLine()
                     is MdBlock.Table -> MdTableBlock(block)
                     // Grouped away above; the parser never hands a bare item to the renderer.
@@ -180,80 +183,6 @@ private fun groupListBlocks(blocks: List<MdBlock>): List<RenderBlock> {
 
 // ---- Inline rendering ------------------------------------------------------
 
-private sealed interface InlineSegment {
-    data class Plain(val text: String) : InlineSegment
-    data class Bold(val text: String) : InlineSegment
-    data class Italic(val text: String) : InlineSegment
-    data class Code(val text: String) : InlineSegment
-    data class Link(val text: String, val url: String) : InlineSegment
-}
-
-private fun parseInlineSegments(text: String): List<InlineSegment> {
-    val segments = mutableListOf<InlineSegment>()
-    val sb = StringBuilder()
-    var i = 0
-    fun flush() {
-        if (sb.isNotEmpty()) {
-            segments += InlineSegment.Plain(sb.toString())
-            sb.clear()
-        }
-    }
-    while (i < text.length) {
-        when {
-            text.startsWith("`", i) -> {
-                val end = text.indexOf('`', i + 1)
-                if (end != -1) {
-                    flush()
-                    segments += InlineSegment.Code(text.substring(i + 1, end))
-                    i = end + 1
-                } else {
-                    sb.append(text[i]); i++
-                }
-            }
-            text.startsWith("**", i) -> {
-                val end = text.indexOf("**", i + 2)
-                if (end != -1) {
-                    flush()
-                    segments += InlineSegment.Bold(text.substring(i + 2, end))
-                    i = end + 2
-                } else {
-                    sb.append(text[i]); i++
-                }
-            }
-            text.startsWith("*", i) -> {
-                val end = text.indexOf("*", i + 1)
-                if (end != -1) {
-                    flush()
-                    segments += InlineSegment.Italic(text.substring(i + 1, end))
-                    i = end + 1
-                } else {
-                    sb.append(text[i]); i++
-                }
-            }
-            text.startsWith("[", i) -> {
-                val close = text.indexOf("](", i + 1)
-                if (close != -1) {
-                    val end = text.indexOf(')', close + 2)
-                    if (end != -1) {
-                        flush()
-                        segments += InlineSegment.Link(text.substring(i + 1, close), text.substring(close + 2, end))
-                        i = end + 1
-                    } else {
-                        sb.append(text[i]); i++
-                    }
-                } else {
-                    sb.append(text[i]); i++
-                }
-            }
-            else -> {
-                sb.append(text[i]); i++
-            }
-        }
-    }
-    flush()
-    return segments
-}
-
 /** Renders one line of markdown with bold/italic/code/link spans. */
 @Composable
 private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = Modifier) {
@@ -276,9 +205,11 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
     val density = LocalDensity.current
     val maxPillWidth = LocalConfiguration.current.screenWidthDp.dp * 0.7f
     val pillStyle = remember(style) { style.copy(fontFamily = DsType.codeFont, fontSize = style.fontSize * 0.9f) }
-    val inlineContent = remember(result, pillStyle, density, maxPillWidth) {
+    val mathSizePx = with(density) { style.fontSize.toPx() }
+    val mathFallbackStyle = remember(style) { style.copy(fontFamily = DsType.codeFont) }
+    val inlineContent = remember(result, pillStyle, density, maxPillWidth, colors, mathSizePx) {
         val lineHeight = style.lineHeight.takeIf { it.isSp }?.let { it.value } ?: (style.fontSize.value * 1.5f)
-        result.getStringAnnotations("path", 0, result.length).withIndex().associate { (index, ann) ->
+        val pills = result.getStringAnnotations("path", 0, result.length).withIndex().associate { (index, ann) ->
             val label = result.text.substring(ann.start, ann.end)
             val width = with(density) {
                 // 1dp of slack so rounding through sp never ellipsizes a label that fits.
@@ -289,6 +220,21 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
                 Placeholder(width, (lineHeight * 0.95f).sp, PlaceholderVerticalAlign.TextCenter),
             ) { FilePill(path = ann.item, label = label, style = style) }
         }
+        // A formula gets exactly the slot its own drawable asks for; one that does not parse falls
+        // back to its source text, measured so the line still lays out around it.
+        val maths = result.getStringAnnotations(MATH_ANNOTATION, 0, result.length).withIndex().associate { (index, ann) ->
+            val drawable = mathDrawable(ann.item, mathSizePx, colors.labelPrimary)
+            val (width, height) = if (drawable != null) {
+                with(density) { drawable.intrinsicWidth.toSp() to drawable.intrinsicHeight.toSp() }
+            } else {
+                val measured = measurer.measure(ann.item, mathFallbackStyle).size
+                with(density) { measured.width.toSp() to measured.height.toSp() }
+            }
+            mathSlotId(index) to InlineTextContent(
+                Placeholder(width, height, PlaceholderVerticalAlign.TextCenter),
+            ) { InlineMath(tex = ann.item, sizePx = mathSizePx) }
+        }
+        pills + maths
     }
     if (!hasLinks) {
         // Nothing to tap, so the text is laid out inside a SelectionContainer instead: long-press
@@ -337,14 +283,23 @@ private fun buildInlineContent(
 ): AnnotatedString {
     val builder = AnnotatedString.Builder()
     var pills = 0
+    var maths = 0
     parseInlineSegments(text).forEach { segment ->
         when (segment) {
             is InlineSegment.Plain -> builder.append(segment.text)
             is InlineSegment.Bold -> builder.withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(segment.text) }
             is InlineSegment.Italic -> builder.withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(segment.text) }
+            is InlineSegment.Strikethrough -> builder.withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(segment.text) }
             is InlineSegment.Code -> builder.withStyle(
                 SpanStyle(fontFamily = codeStyle.fontFamily, color = codeStyle.color),
             ) { append(segment.text) }
+            is InlineSegment.Math -> {
+                // The TeX travels as an annotation so the layout pass can find the slots and give
+                // each one the size its formula actually wants.
+                builder.pushStringAnnotation(MATH_ANNOTATION, segment.tex)
+                builder.appendInlineContent(mathSlotId(maths++), segment.tex)
+                builder.pop()
+            }
             is InlineSegment.Link -> {
                 val path = if (safeHttpUrl(segment.url) == null) com.labteto.dshmobile.ui.screens.main.previewPath(segment.url) else null
                 builder.pushStringAnnotation("url", segment.url)
@@ -367,6 +322,12 @@ private fun buildInlineContent(
 
 /** The inline-content slot of the [index]th workspace-path pill in a paragraph. */
 private fun filePillId(index: Int) = "dsh.file-pill.$index"
+
+/** Carries a formula's TeX through the annotated string so the layout pass can find its slots. */
+private const val MATH_ANNOTATION = "math"
+
+/** The inline-content slot of the [index]th formula in a paragraph. */
+private fun mathSlotId(index: Int) = "dsh.math.$index"
 
 /** Folders go to Files when the host registered a folder opener; everything else to Preview. */
 private fun openWorkspaceReference(path: String, openFile: (String) -> Unit, openFolder: ((String) -> Unit)?) {

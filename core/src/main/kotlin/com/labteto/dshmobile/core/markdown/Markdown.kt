@@ -36,6 +36,13 @@ sealed interface MdBlock {
     data class Code(val lang: String?, val code: String) : MdBlock
     object HorizontalRule : MdBlock
 
+    /**
+     * Display math: [tex] is what stood between `$$…$$` or `\[…\]`, on one line or across several.
+     * A block whose closing delimiter never arrives is not math — it degrades to ordinary text,
+     * like everything else this parser cannot make sense of.
+     */
+    data class Math(val tex: String) : MdBlock
+
     enum class Alignment { LEFT, CENTER, RIGHT }
 
     /**
@@ -58,6 +65,9 @@ sealed interface InlineSegment {
     data class Strikethrough(val text: String) : InlineSegment
     data class Code(val text: String) : InlineSegment
     data class Link(val text: String, val url: String) : InlineSegment
+
+    /** Inline math: `[tex]` was written between `$…$`, `$$…$$` or `\(…\)`. */
+    data class Math(val tex: String) : InlineSegment
 }
 
 // ---- Parser -------------------------------------------------------------------
@@ -75,6 +85,14 @@ fun parseMarkdown(markdown: String): List<MdBlock> {
     while (i < lines.size) {
         val line = lines[i]
         val trimmed = line.trimStart()
+        // Display math is recognised before the block grammar because its delimiters are the only
+        // thing that can span lines without being a list, a table or a fence.
+        val math = readDisplayMath(lines, i)
+        if (math != null) {
+            parsed += MdBlock.Math(math.first)
+            i = math.second
+            continue
+        }
         when {
             trimmed.startsWith("```") -> {
                 val lang = trimmed.removePrefix("```").trim().ifEmpty { null }
@@ -142,6 +160,34 @@ fun parseMarkdown(markdown: String): List<MdBlock> {
     return parsed
 }
 
+/**
+ * Reads a display-math block starting at [start], or null when this line does not open one.
+ *
+ * Only two shapes count, because both are unambiguous and neither can swallow the text around
+ * them: a delimiter alone on its line, closed by the matching delimiter alone on a later line;
+ * or the whole formula on one line, `$$…$$`, with nothing after it. Anything else — an opening
+ * `$$` that never closes, `$$x$$ and then some prose` — stays ordinary text.
+ *
+ * @return the TeX and the index of the first line after the block.
+ */
+private fun readDisplayMath(lines: List<String>, start: Int): Pair<String, Int>? {
+    val line = lines[start].trim()
+    for ((open, close) in listOf("$$" to "$$", "\\[" to "\\]")) {
+        if (line == open) {
+            var end = start + 1
+            while (end < lines.size && lines[end].trim() != close) end++
+            if (end >= lines.size) return null
+            val tex = lines.subList(start + 1, end).joinToString("\n").trim()
+            return if (tex.isEmpty()) null else tex to end + 1
+        }
+        if (line.length > open.length + close.length && line.startsWith(open) && line.endsWith(close)) {
+            val tex = line.substring(open.length, line.length - close.length).trim()
+            return if (tex.isEmpty()) null else tex to start + 1
+        }
+    }
+    return null
+}
+
 /** `:---` → LEFT, `:--:` → CENTER, `---:` → RIGHT; anything else → LEFT. */
 private fun parseAlignments(separatorCells: List<String>, columnCount: Int): List<MdBlock.Alignment> =
     List(columnCount) { index ->
@@ -185,6 +231,8 @@ private fun listLine(line: String, ordered: Boolean): MdBlock.ListItem {
 private fun isSpecialLine(line: String): Boolean {
     val trimmed = line.trimStart()
     return trimmed.startsWith("```") ||
+        trimmed.startsWith("$$") ||
+        trimmed.startsWith("\\[") ||
         HR_REGEX.matches(trimmed) ||
         HEADING_REGEX.matches(trimmed) ||
         trimmed.startsWith("- ") ||
@@ -287,6 +335,31 @@ fun parseInlineSegments(text: String): List<InlineSegment> {
                     sb.append(text[i]); i++
                 }
             }
+            text.startsWith("\\(", i) || text.startsWith("\\[", i) -> {
+                val close = if (text.startsWith("\\(", i)) "\\)" else "\\]"
+                val end = text.indexOf(close, i + 2)
+                if (end > i + 2) {
+                    flush()
+                    segments += InlineSegment.Math(text.substring(i + 2, end).trim())
+                    i = end + 2
+                } else {
+                    sb.append(text[i]); i++
+                }
+            }
+            text.startsWith("\\$", i) -> {
+                // An escaped dollar is a dollar: `\$5` is a price, never the start of a formula.
+                sb.append('$'); i += 2
+            }
+            text.startsWith("$", i) -> {
+                val math = readInlineMath(text, i)
+                if (math != null) {
+                    flush()
+                    segments += InlineSegment.Math(math.first)
+                    i = math.second
+                } else {
+                    sb.append(text[i]); i++
+                }
+            }
             else -> {
                 sb.append(text[i]); i++
             }
@@ -294,6 +367,27 @@ fun parseInlineSegments(text: String): List<InlineSegment> {
     }
     flush()
     return segments
+}
+
+/**
+ * Reads inline math at [start], or null when the dollar there is just a dollar.
+ *
+ * The two rules are the ones that keep prices readable: nothing may follow the opening `$` except
+ * the formula itself, and the closing `$` may not be preceded by a space. So `costs $5 and $10`
+ * stays prose — its only candidate pair ends on a space — while `$x^2$` is math. `$$…$$` works too,
+ * for a display formula a model put in the middle of a sentence.
+ *
+ * @return the TeX and the index just past the closing delimiter.
+ */
+private fun readInlineMath(text: String, start: Int): Pair<String, Int>? {
+    val marker = if (text.startsWith("$$", start)) "$$" else "$"
+    val from = start + marker.length
+    if (from >= text.length || text[from].isWhitespace()) return null
+    val end = text.indexOf(marker, from)
+    if (end <= from) return null
+    val tex = text.substring(from, end)
+    if (tex.last().isWhitespace()) return null
+    return tex to end + marker.length
 }
 
 // ---- URL safety -----------------------------------------------------------------

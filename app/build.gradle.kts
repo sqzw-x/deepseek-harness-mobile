@@ -137,6 +137,10 @@ dependencies {
     // QR scanning for relay pairing. ZXing rather than ML Kit: it needs no Google Play Services, so
     // it works on a de-Googled device, and pairing is the one flow a user cannot route around.
     implementation(libs.zxing.android.embedded)
+    // LaTeX for model replies and document previews. This is JLaTeXMath's Android port: it turns
+    // TeX into a Drawable of its own size, with no WebView and nothing fetched at runtime, so a
+    // formula renders where it stands and at whatever size the surrounding text asks for.
+    implementation(libs.jlatexmath.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
