@@ -34,7 +34,8 @@ internal sealed interface TranscriptRow {
     data class Message(val node: ChatNode) : TranscriptRow { override val seq get() = node.seq }
 
     /**
-     * A run of consecutive work: tool calls, and the reasoning the model wrote between them.
+     * A run of consecutive work: tool calls, the reasoning the model wrote between them, and the
+     * context the harness injected for that work.
      *
      * The model's own answer is the boundary — a message carrying text is what the reader came for,
      * and it stays on screen while everything it took to produce it folds into one row above it.
@@ -67,8 +68,52 @@ private fun ChatBlock.isAnswerContent(): Boolean = when (kind) {
 private fun ChatBlock.isWork(): Boolean = kind == "reasoning" || kind == "tool-call"
 
 /**
- * Group adjacent work into one row, adjacent injected context into another; everything else is a
- * row of its own. Order is preserved: a row's `seq` is its first member's.
+ * Whether a node is context the harness injected rather than something a person said.
+ *
+ * Injected context belongs to the work it was injected for, so the grouping buffers it and lets the
+ * run that follows carry it — see [groupToolRows].
+ */
+internal fun isInjectedContextNode(node: ChatNode): Boolean = when (node) {
+    // Context the reader did not type. A rewind marker is the one user row that is not a turn: it
+    // divides the transcript where the conversation was cut back to, and it stays a row of its own.
+    is UserMessageNode -> node.isInjectedContext && !node.isRewindMarker
+    // A change to the model's tool set is context too; the app already labels it as such.
+    is DeveloperMessageNode -> true
+    is OtherNode -> node.type in CONTEXT_EVENT_TYPES
+    else -> false
+}
+
+/**
+ * Machinery that rides inside a run that is already open.
+ *
+ * A retry, an image the host dropped from context, a note that a teammate's message was delivered:
+ * none of it is a step the reader asked to read, and each one used to end the run it landed in. A
+ * turn that hit two such notices came out as three collapsed blocks — the last of them often no
+ * more than a single thought, which is what made this visible. With no run open there is nothing to
+ * ride in, so the node stays an ordinary row.
+ */
+internal fun isRunAttachment(node: ChatNode): Boolean = when (node) {
+    is RetryNode -> true
+    is OtherNode -> node.type in ATTACHMENT_EVENT_TYPES
+    else -> false
+}
+
+/** Passthrough types that are context rather than work (see `EventClassification.PASSTHROUGH`). */
+private val CONTEXT_EVENT_TYPES = setOf("system/message", "request/context")
+
+/** Passthrough types that describe the machinery and never carry the reader's own content. */
+private val ATTACHMENT_EVENT_TYPES = setOf(
+    "image/offload",
+    "team/member",
+    "team/task",
+    "team/message/queued",
+    "team/message/delivered",
+)
+
+/**
+ * Group adjacent work into one row, and anything the harness injected for that work into the same
+ * row; context with no work to belong to gets a row of its own. Order is preserved: a row's `seq`
+ * is its first member's.
  */
 internal fun groupToolRows(nodes: List<ChatNode>): List<TranscriptRow> {
     val rows = mutableListOf<TranscriptRow>()
@@ -79,6 +124,9 @@ internal fun groupToolRows(nodes: List<ChatNode>): List<TranscriptRow> {
             activity.clear()
         }
     }
+    // Context waiting for the work it was injected for. A turn opens with a few of these — the time,
+    // the workspace instructions, the skill catalog — and they belong inside the run that follows
+    // rather than above it as a row of their own: the reader came for the turn's result.
     val contexts = mutableListOf<ChatNode>()
     fun flushContext() {
         if (contexts.isNotEmpty()) {
@@ -87,12 +135,24 @@ internal fun groupToolRows(nodes: List<ChatNode>): List<TranscriptRow> {
         }
     }
     nodes.forEach {
-        val isContext = (it is UserMessageNode && it.isInjectedContext && it.sourceKind != REWIND_SOURCE_KIND) ||
-            (it is OtherNode && it.type in setOf("system/message", "request/context"))
         when {
-            isActivityNode(it) -> { flushContext(); activity.add(it) }
-            isContext -> { flush(); contexts.add(it) }
-            else -> { flush(); flushContext(); rows.add(TranscriptRow.Message(it)) }
+            isActivityNode(it) -> {
+                activity.addAll(contexts)
+                contexts.clear()
+                activity.add(it)
+            }
+            isInjectedContextNode(it) -> if (activity.isNotEmpty()) activity.add(it) else contexts.add(it)
+            isRunAttachment(it) -> if (activity.isNotEmpty()) {
+                activity.add(it)
+            } else {
+                flushContext()
+                rows.add(TranscriptRow.Message(it))
+            }
+            else -> {
+                flush()
+                flushContext()
+                rows.add(TranscriptRow.Message(it))
+            }
         }
     }
     flush()

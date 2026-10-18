@@ -65,14 +65,59 @@ class ToolGroupsTest {
         assertTrue(rows[0] is TranscriptRow.Message)
     }
 
-    @Test fun `injected context groups apart from work and the rewind marker stays a message`() {
+    @Test fun `injected context joins the run it was injected for`() {
         val skill = UserMessageNode(2, "s", listOf(ChatBlock("text", "skill body")), "skill-invocation")
         val system = OtherNode(3, "system/message", JsonNull)
-        val marker = UserMessageNode(5, "r", emptyList(), REWIND_SOURCE_KIND)
-        val rows = groupToolRows(listOf(user(1), skill, system, call(4), marker))
-        assertEquals(listOf(2L, 3L), (rows[1] as TranscriptRow.Context).nodes.map { it.seq })
-        assertEquals(listOf(4L), activity(rows[2]))
-        assertTrue(rows[3] is TranscriptRow.Message)
+        val rows = groupToolRows(listOf(user(1), skill, system, call(4)))
+        assertEquals(2, rows.size)
+        assertTrue(rows[0] is TranscriptRow.Message)
+        assertEquals(listOf(2L, 3L, 4L), activity(rows[1]))
+    }
+
+    @Test fun `context injected between two steps does not split the run`() {
+        val notice = UserMessageNode(3, "n", listOf(ChatBlock("text", "job finished")), "tool-jobs")
+        val rows = groupToolRows(listOf(call(1), thinking(2), notice, thinking(4), call(5)))
+        assertEquals(1, rows.size)
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), activity(rows[0]))
+    }
+
+    @Test fun `a retry rides inside the run it interrupted`() {
+        val retry = RetryNode(3, "llm/retry", JsonNull)
+        val rows = groupToolRows(listOf(call(1), thinking(2), retry, thinking(4)))
+        assertEquals(1, rows.size)
+        assertEquals(listOf(1L, 2L, 3L, 4L), activity(rows[0]))
+    }
+
+    @Test fun `a retry with no run to ride in stays its own row`() {
+        val retry = RetryNode(2, "llm/retry", JsonNull)
+        val rows = groupToolRows(listOf(assistant(1), retry, call(3)))
+        assertEquals(3, rows.size)
+        assertTrue(rows[1] is TranscriptRow.Message)
+    }
+
+    @Test fun `an offloaded image note rides inside the run`() {
+        val offload = OtherNode(2, "image/offload", JsonNull)
+        val rows = groupToolRows(listOf(call(1), offload, call(3)))
+        assertEquals(1, rows.size)
+        assertEquals(listOf(1L, 2L, 3L), activity(rows[0]))
+    }
+
+    @Test fun `context after the answer keeps a row of its own`() {
+        val notice = UserMessageNode(3, "n", listOf(ChatBlock("text", "time")), "time-context")
+        val rows = groupToolRows(listOf(call(1), assistant(2), notice))
+        assertEquals(3, rows.size)
+        assertEquals(listOf(1L), activity(rows[0]))
+        assertTrue(rows[1] is TranscriptRow.Message)
+        assertEquals(listOf(3L), (rows[2] as TranscriptRow.Context).nodes.map { it.seq })
+    }
+
+    @Test fun `the rewind marker stays a message`() {
+        val marker = UserMessageNode(2, "r", emptyList(), REWIND_SOURCE_KIND)
+        val rows = groupToolRows(listOf(call(1), marker, call(3)))
+        assertEquals(3, rows.size)
+        assertEquals(listOf(1L), activity(rows[0]))
+        assertTrue(rows[1] is TranscriptRow.Message)
+        assertEquals(listOf(3L), activity(rows[2]))
     }
 
     @Test fun `group key remains the first step as the run grows`() {
