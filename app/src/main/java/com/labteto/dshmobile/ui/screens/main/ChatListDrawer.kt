@@ -118,7 +118,12 @@ fun ChatListDrawer(
     val sortByRecency = sessionSort == SORT_UPDATED
     var newWorkspaceOpen by remember { mutableStateOf(false) }
     var newSessionOpen by remember { mutableStateOf(false) }
-    val collapsed = remember { mutableStateMapOf<String, Boolean>() }
+    // Persisted, not remembered: a group you closed stays closed. Absence means expanded, so the
+    // same workspaces are open whatever session happens to be on screen.
+    val collapsedWorkspaces by hostsStore.collapsedWorkspaces
+        .collectAsStateWithLifecycle(initialValue = emptySet<String>())
+    // Subagent subtrees are transient and cheap to open again, so their state stays in memory.
+    val collapsedSubtrees = remember { mutableStateMapOf<String, Boolean>() }
 
     LaunchedEffect(query) {
         delay(250)
@@ -164,11 +169,12 @@ fun ChatListDrawer(
         }
     }
 
-    // `collapsed` holds explicit choices only; the default is closed unless the subtree holds the
-    // session you are looking at, so opening the drawer mid-run shows you where you are.
-    fun isExpanded(sessionId: String): Boolean = collapsed[sessionId]?.not() ?: (sessionId in openPath)
+    // Explicit choices only; the default is closed unless the subtree holds the session you are
+    // looking at, so opening the drawer mid-run shows you where you are.
+    fun isExpanded(sessionId: String): Boolean =
+        collapsedSubtrees[sessionId]?.not() ?: (sessionId in openPath)
     fun toggleChildren(sessionId: String) {
-        collapsed[sessionId] = isExpanded(sessionId)
+        collapsedSubtrees[sessionId] = isExpanded(sessionId)
     }
 
     /** Depth-first expansion of one top-level session, honouring each row's collapse state. */
@@ -319,11 +325,9 @@ fun ChatListDrawer(
                     .let { if (sortByRecency) it.sortedByDescending(SessionRow::updatedAt) else it }
                 if (roots.isEmpty()) continue
                 anyShown = true
-                // Only the workspace you are working in is open by default. With twenty sessions
-                // and their subagents in one group, expanding everything buries the list you came
-                // for; the explicit map entry then remembers whatever you choose.
-                val holdsCurrent = roots.any { it.sessionId in openPath }
-                val isCollapsed = collapsed[workspace.workspaceId] ?: !holdsCurrent
+                // Open unless it was closed by hand. The choice belongs to the workspace, not to
+                // whichever session the drawer happens to be showing.
+                val isCollapsed = workspace.workspaceId in collapsedWorkspaces
                 item(key = "ws-${workspace.workspaceId}") {
                     WorkspaceHeader(
                         workspace = workspace,
@@ -331,7 +335,11 @@ fun ChatListDrawer(
                         // Sessions, not sessions-plus-their-subagents: a subagent count belongs on
                         // the row that spawned them, where it says something.
                         sessionCount = roots.size,
-                        onToggle = { collapsed[workspace.workspaceId] = !isCollapsed },
+                        onToggle = {
+                            scope.launch {
+                                hostsStore.setWorkspaceCollapsed(workspace.workspaceId, !isCollapsed)
+                            }
+                        },
                         store = store,
                         scope = scope,
                         onNewSession = {

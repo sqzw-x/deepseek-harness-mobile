@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.labteto.dshmobile.DshApplication
 import com.labteto.dshmobile.core.wire.WireJson
 import com.labteto.dshmobile.core.wire.dto.HostDescription
@@ -44,6 +45,7 @@ class HostsStore @Inject constructor(
         val PORTS = stringPreferencesKey("ports_json")
         val LAST_SESSIONS = stringPreferencesKey("last_sessions_json")
         val SESSION_SORT = stringPreferencesKey("session_sort")
+        val COLLAPSED_WORKSPACES = stringSetPreferencesKey("collapsed_workspaces")
         val UPDATE_CHECK = booleanPreferencesKey("update_check")
         val DISMISSED_UPDATE = stringPreferencesKey("dismissed_update")
     }
@@ -198,6 +200,21 @@ class HostsStore @Inject constructor(
 
     suspend fun setSessionSort(value: String) {
         dataStore.edit { it[Keys.SESSION_SORT] = value }
+    }
+
+    /**
+     * Drawer workspace groups closed by hand. Absence means expanded, so a workspace nobody has
+     * touched opens by default and the drawer never reshapes itself around the session on screen.
+     */
+    val collapsedWorkspaces: Flow<Set<String>> =
+        dataStore.data.map { it[Keys.COLLAPSED_WORKSPACES] ?: emptySet() }
+
+    suspend fun setWorkspaceCollapsed(workspaceId: String, collapsed: Boolean) {
+        dataStore.edit { prefs ->
+            val current = prefs[Keys.COLLAPSED_WORKSPACES] ?: emptySet()
+            prefs[Keys.COLLAPSED_WORKSPACES] =
+                if (collapsed) current + workspaceId else current - workspaceId
+        }
     }
 
     /** Remember that this release was declined, so it is not offered again. */
