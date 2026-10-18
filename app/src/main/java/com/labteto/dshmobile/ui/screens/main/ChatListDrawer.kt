@@ -139,8 +139,9 @@ fun ChatListDrawer(
     }
 
     // Blank sessions are scratch space the harness reuses; subagent transcripts belong under their
-    // parent, not as top-level rows.
-    val listable = sessions.filter { it.sessionId !in archivedIds && !it.blank }
+    // parent, not as top-level rows. Archiving a parent leaves its subagents in `session/list`
+    // with no archived marker of their own, so that rule has to run before the list does.
+    val listable = remember(sessions, archivedIds) { visibleSessions(sessions, archivedIds) }
     val sessionsById = sessions.associateBy { it.sessionId }
     val archivedSessions = sessions.filter { it.sessionId in archivedIds }
     val workspaceSessionIds = workspaces.flatMap { it.sessionIds }.toSet()
@@ -1003,6 +1004,64 @@ internal fun indexSubagents(
         .filter { it.origin == "subagent" }
         .mapNotNull { child -> attachPoint(child)?.let { it to child } }
         .groupBy({ it.first }, { it.second })
+}
+
+/**
+ * The sessions a list surface may show: not archived, not blank, and not a subagent whose run was
+ * archived out from under it.
+ *
+ * The harness archives exactly what was named, so archiving a parent leaves its subagents in
+ * `session/list` carrying no archived marker of their own. [indexSubagents] then has nothing to
+ * attach them to and each one is drawn as a top-level row — archive one agent team and the drawer
+ * becomes a wall of its transcripts. Such a subagent goes off the list when the nearest ancestor
+ * still in the running is archived; the walk steps over blank ancestors, because the harness reuses
+ * blank sessions and those subagents are reachable from a row that is on screen.
+ *
+ * Free function so the rule can be tested without a device.
+ */
+internal fun visibleSessions(
+    sessions: List<SessionRow>,
+    archivedIds: Set<String>,
+): List<SessionRow> {
+    val byId = sessions.associateBy { it.sessionId }
+
+    /**
+     * Whether the archive is what took this row's lineage away.
+     *
+     * [path] is the chain walked so far, and carrying it down the recursion is what keeps a
+     * malformed lineage from spinning: a row already on the path is a cycle, and a cycle holds no
+     * archive, so it answers false rather than walking it again.
+     */
+    fun isBuried(row: SessionRow, path: MutableSet<String>): Boolean {
+        if (row.origin != "subagent") return false
+        if (!path.add(row.sessionId)) return false
+        var answer = false
+        var cursor = row.parentSessionId
+        while (cursor != null) {
+            val ancestor = byId[cursor]
+            if (cursor in archivedIds) {
+                answer = true
+                break
+            }
+            // A parent the registry no longer carries is the older orphan case: leave that row
+            // where it was rather than inventing a second reason to hide it.
+            if (ancestor == null) break
+            if (!ancestor.blank) {
+                // The nearest live ancestor decides: it is either somewhere on the list, which
+                // keeps this subagent reachable, or buried itself, which buries this one too.
+                answer = isBuried(ancestor, path)
+                break
+            }
+            if (!path.add(cursor)) break
+            cursor = ancestor.parentSessionId
+        }
+        path.remove(row.sessionId)
+        return answer
+    }
+
+    return sessions.filter {
+        it.sessionId !in archivedIds && !it.blank && !isBuried(it, HashSet())
+    }
 }
 
 /** Display title: an explicit title, else the working directory's folder, else the id. */

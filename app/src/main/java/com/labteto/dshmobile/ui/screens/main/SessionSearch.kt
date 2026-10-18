@@ -41,7 +41,8 @@ internal const val SEARCH_RESULT_LIMIT = 30
  *
  * Two exclusions carry over from the reference. Blank sessions never match: their displayed title
  * is a localized placeholder, so matching on it would make results depend on the UI language.
- * Archived sessions never match either — they are out of the list the query is asking about.
+ * Archived sessions never match either — they are out of the list the query is asking about — and
+ * neither do the subagents an archive took with them, since a query reads the same list.
  *
  * A free function so the ordering and dedup rules can be tested without a device, in the same
  * spirit as `sameSubnet` in the discovery engine.
@@ -64,8 +65,10 @@ internal fun deriveSearchResults(
     fun labelOf(session: SessionRow): String =
         workspaceTitleOf[session.sessionId] ?: session.cwd?.let { basename(it) } ?: ""
 
-    fun eligible(session: SessionRow): Boolean =
-        !session.blank && session.sessionId !in archivedIds
+    // The drawer's own listability rule, so a query cannot surface a row the list refuses to draw.
+    val listableIds = visibleSessions(sessions, archivedIds).mapTo(HashSet()) { it.sessionId }
+
+    fun eligible(session: SessionRow): Boolean = session.sessionId in listableIds
 
     val local = sessions
         .filter { eligible(it) }
