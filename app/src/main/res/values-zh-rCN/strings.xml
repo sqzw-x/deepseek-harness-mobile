@@ -570,6 +570,8 @@
     <string name="settings_update_up_to_date">已是最新版本。</string>
     <string name="settings_update_unreachable">无法连接到 GitHub。</string>
     <string name="chat_tool_group_count">工具调用：%1$d</string>
+    <string name="chat_activity_thoughts">思考：%1$d</string>
+    <string name="chat_activity_running_tool">正在运行工具</string>
     <string name="chat_tool_group_failed">失败：%1$d</string>
     <string name="chat_thought_process">思考过程</string>
     <!-- ==== This phone (Termux) ==== -->

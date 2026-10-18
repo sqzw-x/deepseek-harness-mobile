@@ -570,6 +570,8 @@
     <string name="settings_update_up_to_date">آپ کے پاس تازہ ترین ورژن ہے۔</string>
     <string name="settings_update_unreachable">GitHub تک رسائی نہیں ہو سکی۔</string>
     <string name="chat_tool_group_count">ٹول کالز: %1$d</string>
+    <string name="chat_activity_thoughts">خیالات: %1$d</string>
+    <string name="chat_activity_running_tool">ٹول چلا رہا ہے</string>
     <string name="chat_tool_group_failed">%1$d ناکام</string>
     <string name="chat_thought_process">سوچنے کا عمل</string>
     <!-- ==== This phone (Termux) ==== -->

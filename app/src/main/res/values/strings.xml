@@ -573,6 +573,8 @@
     <string name="settings_update_unreachable">Could not reach GitHub.</string>
     <string name="chat_tool_group_count">Tool calls: %1$d</string>
     <string name="chat_tool_group_failed">%1$d failed</string>
+    <string name="chat_activity_thoughts">Thoughts: %1$d</string>
+    <string name="chat_activity_running_tool">Running a tool</string>
     <string name="chat_thought_process">Thought process</string>
     <!-- ==== This phone (Termux) mode, harness control and install via Termux ==== -->
     <string name="connect_mode_loopback">This phone</string>

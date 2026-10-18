@@ -570,6 +570,8 @@
     <string name="settings_update_up_to_date">لديك أحدث إصدار.</string>
     <string name="settings_update_unreachable">تعذر الوصول إلى GitHub.</string>
     <string name="chat_tool_group_count">استدعاءات الأدوات: %1$d</string>
+    <string name="chat_activity_thoughts">أفكار: %1$d</string>
+    <string name="chat_activity_running_tool">جارٍ تشغيل أداة</string>
     <string name="chat_tool_group_failed">%1$d فشلت</string>
     <string name="chat_thought_process">عملية التفكير</string>
     <!-- ==== This phone (Termux) ==== -->

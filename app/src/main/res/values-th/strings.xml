@@ -570,6 +570,8 @@
     <string name="settings_update_up_to_date">คุณมีเวอร์ชันล่าสุดแล้ว</string>
     <string name="settings_update_unreachable">ไม่สามารถเชื่อมต่อ GitHub ได้</string>
     <string name="chat_tool_group_count">เรียกเครื่องมือ: %1$d</string>
+    <string name="chat_activity_thoughts">ความคิด: %1$d</string>
+    <string name="chat_activity_running_tool">กำลังเรียกใช้เครื่องมือ</string>
     <string name="chat_tool_group_failed">ล้มเหลว %1$d</string>
     <string name="chat_thought_process">กระบวนการคิด</string>
     <!-- ==== This phone (Termux) ==== -->

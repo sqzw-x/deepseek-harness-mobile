@@ -570,6 +570,8 @@
     <string name="settings_update_up_to_date">Vous avez la dernière version.</string>
     <string name="settings_update_unreachable">Impossible de joindre GitHub.</string>
     <string name="chat_tool_group_count">Outils : %1$d</string>
+    <string name="chat_activity_thoughts">Raisonnements : %1$d</string>
+    <string name="chat_activity_running_tool">Outil en cours</string>
     <string name="chat_tool_group_failed">%1$d échecs</string>
     <string name="chat_thought_process">Raisonnement</string>
     <!-- ==== This phone (Termux) ==== -->

@@ -213,8 +213,15 @@ internal fun ChatTranscript(
                 // instead: there is only ever one provisional row, and it is the same row before
                 // and after it settles.
                 key = { row ->
-                    val node = (row as? TranscriptRow.Message)?.node
-                    if (node is AssistantMessageNode && node.streaming) STREAMING_ROW_KEY else row.seq
+                    when (row) {
+                        is TranscriptRow.Message ->
+                            if ((row.node as? AssistantMessageNode)?.streaming == true) STREAMING_ROW_KEY else row.seq
+                        // A run can begin with the provisional message itself. Key it on the first
+                        // settled item so the settlement does not rebuild the run under the reader.
+                        is TranscriptRow.Activity ->
+                            row.items.firstOrNull { (it as? AssistantMessageNode)?.streaming != true }?.seq ?: row.seq
+                        else -> row.seq
+                    }
                 },
             ) { row ->
                 val node = (row as? TranscriptRow.Message)?.node
@@ -224,7 +231,7 @@ internal fun ChatTranscript(
                 Column(if (streaming) Modifier else Modifier.animateItem()) {
                     when (row) {
                         is TranscriptRow.Message -> ChatNodeItem(node = row.node, context = context)
-                        is TranscriptRow.Tools -> ToolGroupRow(row.calls, context)
+                        is TranscriptRow.Activity -> ActivityGroupRow(row.items, context)
                         is TranscriptRow.Context -> ContextGroupRow(row.nodes, context)
                     }
                 }
