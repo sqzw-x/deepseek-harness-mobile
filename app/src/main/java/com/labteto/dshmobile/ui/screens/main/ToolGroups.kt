@@ -67,6 +67,32 @@ private fun ChatBlock.isAnswerContent(): Boolean = when (kind) {
 
 private fun ChatBlock.isWork(): Boolean = kind == "reasoning" || kind == "tool-call"
 
+/** Whether a message carries something the reader came to read, rather than only its own work. */
+internal fun AssistantMessageNode.hasAnswerContent(): Boolean = blocks.any { it.isAnswerContent() }
+
+/** The thinking in a message: always part of a run, never part of the answer ([splitReasoning]). */
+internal fun AssistantMessageNode.thoughtBlocks(): List<ChatBlock> =
+    blocks.filter { it.kind == "reasoning" && !it.text.isNullOrBlank() }
+
+/**
+ * Move the thinking out of a message that also carries the answer.
+ *
+ * The model thinks and then writes in one message, and this client used to draw both: an answer
+ * arrived with a thought disclosure of its own above it. The browser never shows a thought outside
+ * the run it belongs to, and this now matches it — the thinking becomes a work node of its own,
+ * which the run above absorbs and counts, and the answer keeps everything else.
+ *
+ * That node takes the **negated seq** of its message: it is not an event, so nothing may treat it as
+ * one (a message with no answer in it offers no actions), while a run keyed on it stays stable as
+ * the answer streams. A message with nothing to move, or nothing left to answer with, stays whole.
+ */
+internal fun splitReasoning(nodes: List<ChatNode>): List<ChatNode> = nodes.flatMap { node ->
+    if (node !is AssistantMessageNode) return@flatMap listOf(node)
+    val (thoughts, answer) = node.blocks.partition { it.kind == "reasoning" && !it.text.isNullOrBlank() }
+    if (thoughts.isEmpty() || !answer.any { it.isAnswerContent() }) return@flatMap listOf(node)
+    listOf(node.copy(seq = -node.seq, blocks = thoughts), node.copy(blocks = answer))
+}
+
 /**
  * Whether a node is context the harness injected rather than something a person said.
  *

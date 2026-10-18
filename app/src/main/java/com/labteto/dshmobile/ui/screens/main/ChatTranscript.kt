@@ -104,12 +104,16 @@ internal fun ChatTranscript(
     modifier: Modifier = Modifier,
 ) {
     // Only the nodes that draw something: a zero-height item still costs its 4dp gap, and a turn's
-    // worth of structural events stacks those gaps into a blank band under the chrome.
+    // worth of structural events stacks those gaps into a blank band under the chrome. The thinking
+    // is split out of the messages that carry an answer before that filter, so it is judged — and
+    // grouped — as work rather than as part of the answer it produced.
     //
     // Reversed here rather than at the call site: the fold's natural order is oldest-first, and
     // that is the order every other reader of `nodes` wants.
     val rows = remember(conversation?.nodes, context.running) {
-        groupToolRows(renderableChatNodes(conversation?.nodes.orEmpty(), context.running)).asReversed()
+        groupToolRows(
+            renderableChatNodes(splitReasoning(conversation?.nodes.orEmpty()), context.running),
+        ).asReversed()
     }
     val hasMore = conversation?.hasMore == true
     val itemCount = rows.size + if (hasMore) 1 else 0

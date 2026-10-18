@@ -372,7 +372,10 @@ private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContex
             DsPill(text = stringResource(R.string.chat_stopped), warn = true)
         }
         AnimatedVisibility(
-            visible = actionsVisible && !streaming,
+            // Actions act on an answer: a message holding nothing but its own thinking — the node
+            // [splitReasoning] hands the run — has no text to copy and no seq of its own to branch
+            // from, so tapping it does nothing.
+            visible = actionsVisible && !streaming && node.hasAnswerContent(),
             enter = fadeIn(DsAnimations.fade),
             exit = fadeOut(DsAnimations.fade),
         ) {

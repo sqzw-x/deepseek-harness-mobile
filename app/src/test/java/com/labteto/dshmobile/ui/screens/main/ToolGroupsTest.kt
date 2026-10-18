@@ -36,11 +36,46 @@ class ToolGroupsTest {
         assertEquals(listOf(3L), activity(rows[2]))
     }
 
-    @Test fun `an assistant message with text and reasoning is the answer, not a step`() {
+    @Test fun `an answer ends the run, and the thinking that came with it stays in it`() {
+        val both = AssistantMessageNode(2, "a", 1, 1, listOf(ChatBlock("reasoning", "hmm"), ChatBlock("text", "here")))
+        val rows = groupToolRows(splitReasoning(listOf(call(1), both, call(3))))
+        assertEquals(3, rows.size)
+        assertEquals(listOf(1L, -2L), activity(rows[0]))
+        val answer = (rows[1] as TranscriptRow.Message).node as AssistantMessageNode
+        assertEquals(listOf("text"), answer.blocks.map { it.kind })
+        assertEquals(listOf(3L), activity(rows[2]))
+    }
+
+    @Test fun `a message with text and reasoning is the answer, not a step`() {
         val both = AssistantMessageNode(1, "a", 1, 1, listOf(ChatBlock("reasoning", "hmm"), ChatBlock("text", "here")))
         val rows = groupToolRows(listOf(both, call(2)))
         assertTrue(rows[0] is TranscriptRow.Message)
         assertEquals(listOf(2L), activity(rows[1]))
+    }
+
+    @Test fun `thinking alone is not split out of its own message`() {
+        assertEquals(listOf(1L), splitReasoning(listOf(thinking(1))).map { it.seq })
+    }
+
+    @Test fun `a message with no answer left in it is not split`() {
+        val blank = AssistantMessageNode(1, "a", 1, 1, listOf(ChatBlock("reasoning", "hmm"), ChatBlock("text", "   ")))
+        assertEquals(listOf(1L), splitReasoning(listOf(blank)).map { it.seq })
+    }
+
+    @Test fun `an attachment survives the split and stays on screen`() {
+        val picture = AssistantMessageNode(1, "a", 1, 1, listOf(ChatBlock("reasoning", "hmm"), ChatBlock("image")))
+        val nodes = splitReasoning(listOf(picture))
+        assertEquals(2, nodes.size)
+        assertEquals(listOf("image"), (nodes[1] as AssistantMessageNode).blocks.map { it.kind })
+        val rows = groupToolRows(nodes)
+        assertEquals(listOf(-1L), activity(rows[0]))
+        assertTrue(rows[1] is TranscriptRow.Message)
+    }
+
+    @Test fun `the split node keeps a seq of its own`() {
+        val both = AssistantMessageNode(7, "a", 1, 1, listOf(ChatBlock("reasoning", "hmm"), ChatBlock("text", "here")))
+        val nodes = splitReasoning(listOf(both))
+        assertEquals(listOf(-7L, 7L), nodes.map { it.seq })
     }
 
     @Test fun `a streaming reasoning-only message is work too`() {
