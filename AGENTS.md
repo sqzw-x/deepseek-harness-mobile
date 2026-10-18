@@ -26,7 +26,8 @@ Treat it as a separate product: upstream is a source of changes, not an authorit
 ## Sync with upstream
 
 - `origin` is our fork; `upstream` is `sorsama/deepseek-harness-mobile`.
-- Integrate upstream with `git fetch upstream && git rebase upstream/main`.
+- Integrate upstream with `git fetch upstream && git merge upstream/main`. Main is published and is
+  never rewritten, so upstream arrives as a merge commit rather than a rebase.
 - Never push to `upstream`, and never rewrite `main` once it has been pushed.
 
 ## Remote operations
