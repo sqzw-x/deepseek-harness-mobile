@@ -52,7 +52,6 @@ import com.labteto.dshmobile.R
 import com.labteto.dshmobile.data.SessionRow
 import com.labteto.dshmobile.data.SessionStore
 import com.labteto.dshmobile.data.WorkspaceRow
-import com.labteto.dshmobile.ui.components.DisclosureRow
 import com.labteto.dshmobile.ui.components.DsButton
 import com.labteto.dshmobile.ui.components.DsButtonVariant
 import com.labteto.dshmobile.ui.components.DsDialog
@@ -143,7 +142,6 @@ fun ChatListDrawer(
     // with no archived marker of their own, so that rule has to run before the list does.
     val listable = remember(sessions, archivedIds) { visibleSessions(sessions, archivedIds) }
     val sessionsById = sessions.associateBy { it.sessionId }
-    val archivedSessions = sessions.filter { it.sessionId in archivedIds }
     val workspaceSessionIds = workspaces.flatMap { it.sessionIds }.toSet()
 
     // Subagents nest under the session that spawned them. `origin` is the discriminator, not
@@ -394,23 +392,8 @@ fun ChatListDrawer(
                 }
             }
 
-            if (archivedSessions.isNotEmpty()) {
-                anyShown = true
-                item(key = "archived") {
-                    var archivedExpanded by remember { mutableStateOf(false) }
-                    DisclosureRow(
-                        title = stringResource(R.string.chatlist_archived),
-                        summary = archivedSessions.size.toString(),
-                        expanded = archivedExpanded,
-                        onToggle = { archivedExpanded = !archivedExpanded },
-                    ) {
-                        archivedSessions.forEach { session ->
-                            SessionRowItem(session, false, store, scope, onClose)
-                        }
-                    }
-                }
-            }
-
+            // Archived sessions are deliberately absent: Settings owns them, and a drawer that
+            // also carried an expandable copy of the archive was two places to do one job.
             if (!anyShown) {
                 item(key = "empty") {
                     EmptyHero(
