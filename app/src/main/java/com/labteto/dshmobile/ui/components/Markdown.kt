@@ -241,10 +241,12 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         // selects and the platform handles the copy affordance. A ClickableText swallows the
         // long-press, which is why the two cannot share one branch. Re-keyed on the shared dismiss
         // token so a tap elsewhere in the transcript clears the selection (see ChatTranscript).
+        // The inline slots are still handed over: a formula is inline content whether or not the
+        // line has a link in it, and a text without them draws each slot's source instead.
         val dismissToken = LocalSelectionDismiss.current.value
         key(dismissToken) {
             SelectionContainer(modifier = modifier) {
-                Text(result, style = style)
+                Text(result, style = style, inlineContent = inlineContent)
             }
         }
         return
@@ -280,44 +282,63 @@ private fun buildInlineContent(
     text: String,
     codeStyle: TextStyle,
     colors: DsColors,
-): AnnotatedString {
-    val builder = AnnotatedString.Builder()
-    var pills = 0
-    var maths = 0
-    parseInlineSegments(text).forEach { segment ->
-        when (segment) {
-            is InlineSegment.Plain -> builder.append(segment.text)
-            is InlineSegment.Bold -> builder.withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(segment.text) }
-            is InlineSegment.Italic -> builder.withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(segment.text) }
-            is InlineSegment.Strikethrough -> builder.withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(segment.text) }
-            is InlineSegment.Code -> builder.withStyle(
-                SpanStyle(fontFamily = codeStyle.fontFamily, color = codeStyle.color),
-            ) { append(segment.text) }
-            is InlineSegment.Math -> {
-                // The TeX travels as an annotation so the layout pass can find the slots and give
-                // each one the size its formula actually wants.
-                builder.pushStringAnnotation(MATH_ANNOTATION, segment.tex)
-                builder.appendInlineContent(mathSlotId(maths++), segment.tex)
-                builder.pop()
-            }
-            is InlineSegment.Link -> {
-                val path = if (safeHttpUrl(segment.url) == null) com.labteto.dshmobile.ui.screens.main.previewPath(segment.url) else null
-                builder.pushStringAnnotation("url", segment.url)
-                if (path != null) {
-                    // A path into the session's workspace is an artifact, not a web link: it is
-                    // drawn as a pill (see [InlineMarkdown]'s inlineContent) so it reads as a file
-                    // you can open, and never as a blue word that may go anywhere.
-                    builder.pushStringAnnotation("path", path)
-                    builder.appendInlineContent(filePillId(pills++), segment.text.ifBlank { path })
-                    builder.pop()
-                } else {
-                    builder.withStyle(SpanStyle(color = colors.accent)) { append(segment.text) }
+): AnnotatedString = InlineSpans(codeStyle, colors).emit(parseInlineSegments(text)).toAnnotatedString()
+
+/**
+ * Walks the segment tree into one annotated string.
+ *
+ * Emphasis is descended into rather than appended: its content is a segment list of its own, so a
+ * formula or a workspace pill written inside bold takes its slot from the same counters as one at
+ * the top level. Those counters have to stay unique for the whole line — the layout pass finds a
+ * slot by the id `buildInlineContent` gave it.
+ */
+private class InlineSpans(private val codeStyle: TextStyle, private val colors: DsColors) {
+    private val builder = AnnotatedString.Builder()
+    private var pills = 0
+    private var maths = 0
+
+    fun emit(segments: List<InlineSegment>): AnnotatedString.Builder {
+        segments.forEach { segment ->
+            when (segment) {
+                is InlineSegment.Plain -> builder.append(segment.text)
+                is InlineSegment.Bold -> builder.withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                    emit(segment.segments)
                 }
-                builder.pop()
+                is InlineSegment.Italic -> builder.withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                    emit(segment.segments)
+                }
+                is InlineSegment.Strikethrough -> builder.withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                    emit(segment.segments)
+                }
+                is InlineSegment.Code -> builder.withStyle(
+                    SpanStyle(fontFamily = codeStyle.fontFamily, color = codeStyle.color),
+                ) { builder.append(segment.text) }
+                is InlineSegment.Math -> {
+                    // The TeX travels as an annotation so the layout pass can find the slots and give
+                    // each one the size its formula actually wants.
+                    builder.pushStringAnnotation(MATH_ANNOTATION, segment.tex)
+                    builder.appendInlineContent(mathSlotId(maths++), segment.tex)
+                    builder.pop()
+                }
+                is InlineSegment.Link -> {
+                    val path = if (safeHttpUrl(segment.url) == null) com.labteto.dshmobile.ui.screens.main.previewPath(segment.url) else null
+                    builder.pushStringAnnotation("url", segment.url)
+                    if (path != null) {
+                        // A path into the session's workspace is an artifact, not a web link: it is
+                        // drawn as a pill (see [InlineMarkdown]'s inlineContent) so it reads as a file
+                        // you can open, and never as a blue word that may go anywhere.
+                        builder.pushStringAnnotation("path", path)
+                        builder.appendInlineContent(filePillId(pills++), segment.text.ifBlank { path })
+                        builder.pop()
+                    } else {
+                        builder.withStyle(SpanStyle(color = colors.accent)) { builder.append(segment.text) }
+                    }
+                    builder.pop()
+                }
             }
         }
+        return builder
     }
-    return builder.toAnnotatedString()
 }
 
 /** The inline-content slot of the [index]th workspace-path pill in a paragraph. */

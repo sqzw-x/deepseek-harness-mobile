@@ -115,13 +115,13 @@ class MarkdownTest {
         assertEquals(
             listOf(
                 InlineSegment.Plain("a "),
-                InlineSegment.Bold("b"),
+                InlineSegment.Bold(listOf(InlineSegment.Plain("b"))),
                 InlineSegment.Plain(" "),
-                InlineSegment.Italic("c"),
+                InlineSegment.Italic(listOf(InlineSegment.Plain("c"))),
                 InlineSegment.Plain(" "),
                 InlineSegment.Code("d"),
                 InlineSegment.Plain(" "),
-                InlineSegment.Strikethrough("e"),
+                InlineSegment.Strikethrough(listOf(InlineSegment.Plain("e"))),
                 InlineSegment.Plain(" "),
                 InlineSegment.Link("f", "https://x.y"),
             ),
@@ -196,6 +196,55 @@ class MarkdownTest {
         val blocks = parseMarkdown("- regular item")
         val item = blocks[0] as MdBlock.ListItem
         assertNull(item.checked)
+    }
+
+    // ---- Emphasis nesting ------------------------------------------------------
+
+    @Test
+    fun aFormulaInsideBoldIsStillAFormula() {
+        val segments = parseInlineSegments("**随 \$M\$ 增长反而下降**")
+        assertEquals(
+            listOf(
+                InlineSegment.Bold(
+                    listOf(
+                        InlineSegment.Plain("随 "),
+                        InlineSegment.Math("M"),
+                        InlineSegment.Plain(" 增长反而下降"),
+                    ),
+                ),
+            ),
+            segments,
+        )
+    }
+
+    @Test
+    fun emphasisNestingKeepsCodeAndLinks() {
+        val segments = parseInlineSegments("**see `x` and [y](https://x.y)**")
+        assertEquals(
+            listOf(
+                InlineSegment.Bold(
+                    listOf(
+                        InlineSegment.Plain("see "),
+                        InlineSegment.Code("x"),
+                        InlineSegment.Plain(" and "),
+                        InlineSegment.Link("y", "https://x.y"),
+                    ),
+                ),
+            ),
+            segments,
+        )
+    }
+
+    @Test
+    fun italicsAndStrikethroughNestTheSameWay() {
+        assertEquals(
+            listOf(InlineSegment.Italic(listOf(InlineSegment.Math("x")))),
+            parseInlineSegments("*\$x\$*"),
+        )
+        assertEquals(
+            listOf(InlineSegment.Strikethrough(listOf(InlineSegment.Math("x")))),
+            parseInlineSegments("~~\$x\$~~"),
+        )
     }
 
     // ---- safeHttpUrl ----------------------------------------------------------

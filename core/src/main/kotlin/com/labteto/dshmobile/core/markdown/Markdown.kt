@@ -60,9 +60,16 @@ sealed interface MdBlock {
 
 sealed interface InlineSegment {
     data class Plain(val text: String) : InlineSegment
-    data class Bold(val text: String) : InlineSegment
-    data class Italic(val text: String) : InlineSegment
-    data class Strikethrough(val text: String) : InlineSegment
+
+    /**
+     * Emphasis keeps what it wraps as segments rather than as one string: the content between the
+     * markers follows the same grammar as the line around it, so a formula written inside bold is
+     * still a formula. Holding it as text is what used to print a `**随 $M$ 增长**` reply with its
+     * dollars showing — the styling layer had nothing left to recognise.
+     */
+    data class Bold(val segments: List<InlineSegment>) : InlineSegment
+    data class Italic(val segments: List<InlineSegment>) : InlineSegment
+    data class Strikethrough(val segments: List<InlineSegment>) : InlineSegment
     data class Code(val text: String) : InlineSegment
     data class Link(val text: String, val url: String) : InlineSegment
 
@@ -292,7 +299,7 @@ fun parseInlineSegments(text: String): List<InlineSegment> {
                 val end = text.indexOf("**", i + 2)
                 if (end != -1 && end > i + 2) {
                     flush()
-                    segments += InlineSegment.Bold(text.substring(i + 2, end))
+                    segments += InlineSegment.Bold(parseInlineSegments(text.substring(i + 2, end)))
                     i = end + 2
                 } else {
                     sb.append(text[i]); i++
@@ -302,7 +309,7 @@ fun parseInlineSegments(text: String): List<InlineSegment> {
                 val end = text.indexOf("~~", i + 2)
                 if (end != -1 && end > i + 2) {
                     flush()
-                    segments += InlineSegment.Strikethrough(text.substring(i + 2, end))
+                    segments += InlineSegment.Strikethrough(parseInlineSegments(text.substring(i + 2, end)))
                     i = end + 2
                 } else {
                     sb.append(text[i]); i++
@@ -314,7 +321,7 @@ fun parseInlineSegments(text: String): List<InlineSegment> {
                 // (e.g. "2 * 3" stays literal).
                 if (end != -1 && end > i + 1 && text[i + 1] != ' ') {
                     flush()
-                    segments += InlineSegment.Italic(text.substring(i + 1, end))
+                    segments += InlineSegment.Italic(parseInlineSegments(text.substring(i + 1, end)))
                     i = end + 1
                 } else {
                     sb.append(text[i]); i++
