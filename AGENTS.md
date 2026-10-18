@@ -44,6 +44,9 @@ Treat it as a separate product: upstream is a source of changes, not an authorit
   conventional-commit prefixes. Example: `Show tool-result images from their attachments`.
 - Never add AI attribution trailers unless the user asks for one.
 - Never commit or print secrets: `keystore.properties`, `*.jks`, `*.keystore`.
+- A user-visible change also updates `FORK.md` in the same commit. It states what this fork offers
+  that upstream does not — the result, not the history — and upstream's `CHANGELOG.md` is never
+  edited here.
 
 ## Code knowledge base
 
