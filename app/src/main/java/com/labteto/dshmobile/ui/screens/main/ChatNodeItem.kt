@@ -219,7 +219,7 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
         // Unknown event types stay visible — that is the compatibility contract — but the
         // structural ones are not "unknown", they are bookkeeping, and printing `step/start` /
         // `step/end` between every tool call buried the actual work in noise.
-        is OtherNode -> if (node.type !in STRUCTURAL_EVENT_TYPES) {
+        is OtherNode -> if (!isStructuralEventType(node.type)) {
             if (node.type == "deliverables/presented") {
                 val open = com.labteto.dshmobile.ui.components.LocalFileOpener.current
                 ((node.data as? JsonObject)?.get("files") as? JsonArray)?.forEach { file ->
@@ -252,7 +252,25 @@ internal val STRUCTURAL_EVENT_TYPES = setOf(
     "assistant/chunk",
     // A model attempt that settled without a message (harness 0.1.3): replay data, not content.
     "assistant/attempt",
+    // A diff of the workspace is what the Workspace screen is for; the event on its own is a wire
+    // name and a wall of JSON.
+    "workspace/changes",
 )
+
+/**
+ * Whether an event type is harness bookkeeping rather than something to read.
+ *
+ * Every `job/…` event is bookkeeping: the jobs this app draws come from the `job/list` and
+ * `job/follow` streams, so a lifecycle event in the log is the same fact a second time, spelled as
+ * a wire name. It is a prefix rule rather than a list because the lifecycle is the harness's to
+ * extend, and each new phase would otherwise print itself into the transcript again.
+ *
+ * A type this build has never heard of is **not** structural. Those stay visible — that is the
+ * compatibility contract, and it is why this is a rule about names we recognise rather than a
+ * filter on everything unfamiliar.
+ */
+internal fun isStructuralEventType(type: String): Boolean =
+    type in STRUCTURAL_EVENT_TYPES || type.startsWith("job/")
 
 /**
  * One stored file in a message: its display name and exact size, nothing more.

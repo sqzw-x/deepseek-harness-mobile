@@ -91,7 +91,33 @@ class ChatNodeVisibilityTest {
         // The compatibility contract keeps genuinely unknown types visible; the noise is named.
         assertFalse(OtherNode(seq = 4, type = "step/start", data = JsonNull).rendersContent())
         assertFalse(OtherNode(seq = 5, type = "assistant/chunk", data = JsonNull).rendersContent())
-        assertTrue(OtherNode(seq = 6, type = "something/new", data = JsonNull).rendersContent())
+        assertFalse(OtherNode(seq = 6, type = "workspace/changes", data = JsonNull).rendersContent())
+        assertTrue(OtherNode(seq = 7, type = "something/new", data = JsonNull).rendersContent())
+    }
+
+    @Test
+    fun `the job lifecycle never prints itself into the transcript`() {
+        // Jobs are drawn from the job/list and job/follow streams; a lifecycle event is the same
+        // fact again, as a wire name. The prefix rule covers phases this build has not met yet.
+        assertFalse(OtherNode(seq = 1, type = "job/registered", data = JsonNull).rendersContent())
+        assertFalse(OtherNode(seq = 2, type = "job/settled", data = JsonNull).rendersContent())
+        assertFalse(OtherNode(seq = 3, type = "job/whatever-comes-next", data = JsonNull).rendersContent())
+        assertTrue(isStructuralEventType("job/output"))
+        assertFalse(isStructuralEventType("jobs/something"))
+    }
+
+    @Test
+    fun `bookkeeping between two calls does not split the run`() {
+        // The filter has to run before grouping: a row that draws nothing but is still in the list
+        // is a boundary, and one `job/settled` would cut a run of work in half.
+        val nodes = listOf(
+            ToolCallNode(seq = 1, callId = "a", name = "read", arguments = "{}", turn = 1, step = 1),
+            OtherNode(seq = 2, type = "job/settled", data = JsonNull),
+            ToolCallNode(seq = 3, callId = "b", name = "read", arguments = "{}", turn = 1, step = 1),
+        )
+        val rows = groupToolRows(renderableChatNodes(nodes, running = true))
+        assertEquals(1, rows.size)
+        assertEquals(listOf(1L, 3L), (rows[0] as TranscriptRow.Activity).items.map { it.seq })
     }
 
     @Test

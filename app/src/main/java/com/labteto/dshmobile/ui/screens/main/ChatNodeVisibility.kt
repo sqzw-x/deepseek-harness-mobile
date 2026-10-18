@@ -84,8 +84,10 @@ internal fun ChatNode.rendersContent(
     // Only an unclean ending says anything; a completed turn is the frame. Kinds [ChatNodeItem]
     // draws nothing for (harness 0.1.7's `forked`, or one this build has never seen) cost a gap.
     is TurnEndNode -> reasonKind in DRAWN_TURN_END_KINDS
-    // Bookkeeping event types are not "unknown" — they are noise between the tool calls.
-    is OtherNode -> type !in STRUCTURAL_EVENT_TYPES
+    // Bookkeeping event types are not "unknown" — they are noise between the tool calls. Filtering
+    // them here rather than only in the renderer also keeps them out of [groupToolRows], which
+    // would otherwise let a `job/settled` row split one run of work into two.
+    is OtherNode -> !isStructuralEventType(type)
 
     // Content that can still fold to nothing.
     is UserMessageNode -> blocks.any { it.kind == "image" } || displayText().isNotBlank()
