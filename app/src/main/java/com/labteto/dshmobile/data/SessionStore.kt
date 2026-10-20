@@ -395,6 +395,17 @@ class SessionStore @Inject constructor(
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
 
+    /**
+     * A session something outside the app asked us to show, not yet opened.
+     *
+     * A notification tap is the only producer, and it can land at any point in the app's life —
+     * including before there is a connection that could open anything. It survives until a
+     * baseline consumes it, so a cold start from a notification lands in the right transcript
+     * rather than wherever the landing policy would have gone.
+     */
+    private val _pendingReveal = MutableStateFlow<String?>(null)
+    val pendingReveal: StateFlow<String?> = _pendingReveal.asStateFlow()
+
     private val _searchResults = MutableStateFlow<List<Pair<String, String>>>(emptyList())
     val searchResults: StateFlow<List<Pair<String, String>>> = _searchResults.asStateFlow()
 
@@ -597,6 +608,24 @@ class SessionStore @Inject constructor(
 
     /** The open session's live journal. Cancelled and replaced whenever the open session changes. */
     private var followJob: Job? = null
+
+    /**
+     * Recent events of sessions that are not the one on screen, by session id.
+     *
+     * Two things fill one of these: stashing the open session when the reader switches away, and
+     * a background `session/follow` for a session the host calls running — the only kind that can
+     * produce events while nobody is looking. A cache is what lets switching back paint before
+     * the network answers, and for a running session what it paints is already current.
+     */
+    private val sessionCaches = LinkedHashMap<String, SessionCache>()
+
+    private class SessionCache(val sessionId: String) {
+        val events = ArrayDeque<SessionEventEnvelope>()
+        /** The log cut this cache is current to; also what paging backwards pins to. */
+        var cursor: Int = -1
+        /** The background stream feeding it, or null when it is only being remembered. */
+        var job: Job? = null
+    }
     private var childFollowJob: Job? = null
 
     /** Host-wide live control (queue, jobs, projections). One per connection generation. */
@@ -772,11 +801,18 @@ class SessionStore @Inject constructor(
             launch { refreshPermissionCatalog() }
             // The list is the one read the landing session is chosen from, so it alone is awaited.
             refreshSessions()
+            // A reveal outranks both: it names a session the user just tapped through to, which is
+            // more specific than anything the landing policy can infer.
+            val reveal = _pendingReveal.value
             // On a reconnect `currentSessionId` is already set, so the resolver only ever runs on
             // the first connect of a process — no double-open, and reconnect keeps reopening what
             // was open.
-            val sid = currentSessionId.value ?: resolveInitialSession() ?: return@coroutineScope
+            val sid = reveal ?: currentSessionId.value ?: resolveInitialSession()
+                ?: return@coroutineScope
             openSession(sid)
+            if (reveal != null) _pendingReveal.compareAndSet(reveal, null)
+            // Every background stream died with the generation that carried it.
+            restartWatchers()
         }
     }
 
@@ -1288,6 +1324,9 @@ class SessionStore @Inject constructor(
             else publishCatalogSubagentsLocked()
             emitSessionsLocked()
         }
+        // Running is the only state that can produce events with nobody looking, so it is the
+        // only one worth a background stream; the cache outlives the stream either way.
+        if (running) startWatcher(sessionId) else stopWatcher(sessionId)
     }
 
     /** Reorder one session on a durable user message, without touching anything else about it. */
@@ -1529,11 +1568,39 @@ class SessionStore @Inject constructor(
      */
     private fun applyWorkspaceValue(value: WorkspaceValue) = upsertWorkspace(value.workspace)
 
+    /**
+     * Show the session a notification pointed at.
+     *
+     * Connected: open it now. Not connected yet: leave it pending, and [baseline] opens it instead
+     * of the landing session it would otherwise have picked.
+     */
+    fun revealSession(sessionId: String) {
+        if (sessionId.isBlank()) return
+        _pendingReveal.value = sessionId
+        if (connectionManager.connectedApi == null) return
+        scope.launch {
+            openSession(sessionId)
+            _pendingReveal.compareAndSet(sessionId, null)
+        }
+    }
+
     suspend fun openSession(sessionId: String) = withContext(Dispatchers.Default) {
         val api = apiOrNull() ?: return@withContext
         _loadOlderFailed.value = false
+        var wake: String? = null
         synchronized(lock) {
-            val same = currentId == sessionId
+            val left = currentId
+            val same = left == sessionId
+            // What is on screen is worth keeping: switching away and back is the common case, and
+            // re-fetching a window the process still holds is pure waiting.
+            if (!same) stashCurrentLocked()
+            val cached = sessionCaches[sessionId]?.also { cache ->
+                // The open session gets a full stream below; a background one for the same
+                // session would deliver every event twice.
+                cache.job?.cancel()
+                cache.job = null
+            }
+            val seeded = cached?.events?.toList().orEmpty()
             currentId = sessionId
             _currentSessionId.value = sessionId
             currentEvents.clear()
@@ -1542,8 +1609,17 @@ class SessionStore @Inject constructor(
             currentProjections.clear()
             currentQueue = emptyList()
             liveAssistant.clear()
+            followCursor = null
+            if (seeded.isNotEmpty()) {
+                currentEvents.addAll(seeded)
+                currentHasMore = true
+                if (cached != null && cached.cursor >= 0) followCursor = cached.cursor
+                // Painted before the request goes out, and replaced wholesale when the fresh
+                // snapshot lands — the cursor is what makes that replacement lossless.
+                rebuildCurrentLocked()
+            }
             if (!same) {
-                _currentConversation.value = null
+                if (seeded.isEmpty()) _currentConversation.value = null
                 _jobs.value = emptyList()
                 _skills.value = emptyList()
                 _models.value = null
@@ -1553,7 +1629,12 @@ class SessionStore @Inject constructor(
                 _commands.value = emptyList()
                 _pendingPermission.value = null
             }
+            // Read here, acted on below: it is the session being left, and `currentId` no longer
+            // names it by the time the streams are started.
+            wake = if (same) null else left?.takeIf { runningBySession[it] == true }
         }
+        // A session that is still running keeps producing after the reader leaves it.
+        wake?.let(::startWatcher)
         startFollow(sessionId)
         startJobs(sessionId)
         // Everything past the follow stream furnishes the chrome around the transcript — the skill
@@ -1571,6 +1652,21 @@ class SessionStore @Inject constructor(
             launch { refreshCommands() }
             launch { rememberLastSession(sessionId) }
         }
+    }
+
+    /** Named arguments of one `session/follow` opening. */
+    private fun followArgs(sessionId: String, maxMessages: Int?, assistantStream: Boolean) = buildJsonObject {
+        put(
+            "request",
+            encodeToJsonElement(
+                SessionFollowRequest.serializer(),
+                SessionFollowRequest(
+                    address = SessionAddress.Session(sessionId = sessionId),
+                    maxMessages = maxMessages,
+                    assistantStream = assistantStream,
+                ),
+            ),
+        )
     }
 
     /**
@@ -1599,19 +1695,7 @@ class SessionStore @Inject constructor(
             log("cannot follow $sessionId: no connection generation")
             return
         }
-        val args = buildJsonObject {
-            put(
-                "request",
-                encodeToJsonElement(
-                    SessionFollowRequest.serializer(),
-                    SessionFollowRequest(
-                        address = SessionAddress.Session(sessionId = sessionId),
-                        maxMessages = HISTORY_PAGE_SIZE,
-                        assistantStream = true,
-                    ),
-                ),
-            )
-        }
+        val args = followArgs(sessionId, HISTORY_PAGE_SIZE, assistantStream = true)
         followJob = scope.launch {
             runCatching {
                 mux.openStream("session/follow", args).collect { item ->
@@ -1727,6 +1811,107 @@ class SessionStore @Inject constructor(
             liveAssistant.accept(frame.frame) != AssistantLiveState.Change.NONE
         }
         if (changed) rebuildTicks.trySend(Unit)
+    }
+
+    // ------------------------------------------------------------------ background sessions
+    private fun cacheOfLocked(sessionId: String): SessionCache {
+        sessionCaches[sessionId]?.let { return it }
+        val cache = SessionCache(sessionId)
+        sessionCaches[sessionId] = cache
+        while (sessionCaches.size > MAX_SESSION_CACHES) {
+            val victim = sessionCaches.values.firstOrNull { it.sessionId != currentId } ?: break
+            sessionCaches.remove(victim.sessionId)
+            victim.job?.cancel()
+        }
+        return cache
+    }
+
+    /** Keep what the reader was just looking at, so coming back does not start from nothing. */
+    private fun stashCurrentLocked() {
+        val sid = currentId ?: return
+        if (currentEvents.isEmpty()) return
+        val cache = cacheOfLocked(sid)
+        cache.events.clear()
+        cache.events.addAll(currentEvents)
+        followCursor?.let { cache.cursor = it }
+        trimCacheLocked(cache)
+    }
+
+    private fun trimCacheLocked(cache: SessionCache) {
+        while (cache.events.size > MAX_CACHED_EVENTS) cache.events.removeFirst()
+    }
+
+    /** Start watching [sessionId] in the background, if it is not already watched. */
+    private fun startWatcher(sessionId: String) {
+        if (sessionId == currentId) return
+        if (connectionManager.generation?.mux == null) return
+        synchronized(lock) {
+            if (sessionCaches[sessionId]?.job != null) return
+            val cache = cacheOfLocked(sessionId)
+            cache.job = scope.launch { watch(cache) }
+        }
+    }
+
+    private fun stopWatcher(sessionId: String) {
+        synchronized(lock) {
+            val cache = sessionCaches[sessionId] ?: return
+            cache.job?.cancel()
+            cache.job = null
+        }
+    }
+
+    /** Every background stream died with the generation that carried it; reopen them. */
+    private fun restartWatchers() {
+        val running = synchronized(lock) {
+            sessionCaches.values.forEach { it.job?.cancel(); it.job = null }
+            runningBySession.filterValues { it }.keys.toList()
+        }
+        running.forEach(::startWatcher)
+    }
+
+    /**
+     * Feed one background session's cache from its own `session/follow`.
+     *
+     * Deliberately not sharing the folding path with the open session: this one keeps events, it
+     * does not interpret them. Only when the reader switches here does anything get folded, and
+     * by then the stream that matters has been reopened with the assistant frames this one does
+     * not ask for.
+     */
+    private suspend fun watch(cache: SessionCache) {
+        try {
+            val mux = connectionManager.generation?.mux ?: return
+            mux.openStream(
+                "session/follow",
+                followArgs(cache.sessionId, HISTORY_PAGE_SIZE, assistantStream = false),
+            ).collect { item ->
+                when (val frame = decodeOrNull(SessionFollowFrameSerializer, item)) {
+                    is SessionFollowFrame.Snapshot -> synchronized(lock) {
+                        cache.cursor = frame.cursor
+                        cache.events.clear()
+                        expandRecords(frame.records).forEach { cache.events.addLast(it) }
+                        trimCacheLocked(cache)
+                    }
+
+                    is SessionFollowFrame.Entry -> synchronized(lock) {
+                        val last = cache.events.lastOrNull()?.seq ?: -1L
+                        expandRecords(listOf(frame.record)).forEach {
+                            if (it.seq > last) cache.events.addLast(it)
+                        }
+                        trimCacheLocked(cache)
+                    }
+
+                    // No assistant frames were asked for, and a kind this build does not know is
+                    // the next generation's problem rather than a reason to drop the cache.
+                    else -> Unit
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("background follow for ${cache.sessionId} ended", e)
+        } finally {
+            synchronized(lock) { if (sessionCaches[cache.sessionId] === cache) cache.job = null }
+        }
     }
 
     /**
@@ -2745,6 +2930,17 @@ class SessionStore @Inject constructor(
         /** Largest file the base64 Remote fallback will carry; anything bigger needs the route. */
         const val MAX_ENCODED_UPLOAD_BYTES = 20L * 1024 * 1024
         const val HISTORY_PAGE_SIZE = 60
+
+        /** Sessions whose events are kept off-screen; what switching back can paint from. */
+        const val MAX_SESSION_CACHES = 6
+
+        /**
+         * Events kept per cached session.
+         *
+         * A turn is a few hundred events once tool traffic is counted, so this holds the recent
+         * past of a session without letting an abandoned one grow without bound.
+         */
+        const val MAX_CACHED_EVENTS = 400
 
         /** Ceiling on events folded per page, whatever the host sends. */
         const val MAX_PAGE_EVENTS = 4_000

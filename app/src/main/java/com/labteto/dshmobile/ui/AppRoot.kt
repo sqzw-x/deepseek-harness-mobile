@@ -85,6 +85,16 @@ fun AppRoot(viewModel: AppViewModel = hiltViewModel()) {
         // back to an empty address field would lose the one thing the user had already supplied.
         var showPair by rememberSaveable { mutableStateOf(false) }
         var pairUrl by rememberSaveable { mutableStateOf<String?>(null) }
+        // A notification tap names a session, so it also outranks whatever screen is showing: the
+        // store opens it either now or once the connection lands, and the detour must get out of
+        // the way or the tap looks like it did nothing.
+        val pendingReveal by rememberSessionStore().pendingReveal.collectAsStateWithLifecycle()
+        LaunchedEffect(pendingReveal) {
+            if (pendingReveal != null) {
+                showSettings = false
+                showPair = false
+            }
+        }
         val showMain = connection.phase == ConnectionPhase.CONNECTED ||
             (connection.phase == ConnectionPhase.RECONNECTING && connection.hasConnected)
         Box(Modifier.fillMaxSize()) {

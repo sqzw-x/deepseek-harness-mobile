@@ -1,5 +1,6 @@
 package com.labteto.dshmobile
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -11,6 +12,7 @@ import androidx.core.os.LocaleListCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.labteto.dshmobile.connection.HostsStore
+import com.labteto.dshmobile.data.SessionStore
 import com.labteto.dshmobile.notify.DshNotifications
 import com.labteto.dshmobile.ui.AppRoot
 import dagger.hilt.android.AndroidEntryPoint
@@ -22,6 +24,7 @@ class MainActivity : AppCompatActivity() {
 
     @Inject lateinit var hostsStore: HostsStore
     @Inject lateinit var notifications: DshNotifications
+    @Inject lateinit var sessionStore: SessionStore
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -63,9 +66,43 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        revealFromIntent(intent)
+
         setContent {
             AppRoot()
         }
+    }
+
+    /**
+     * A notification tapped while this activity is already running lands here, not in [onCreate].
+     *
+     * `launchMode="singleTask"` means the existing instance is reused for that tap, so without
+     * this override the intent — and with it the session the notification was about — is dropped
+     * on the floor.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        revealFromIntent(intent)
+    }
+
+    /**
+     * The session a notification pointed at, in whichever of its two forms arrived.
+     *
+     * The extra is authoritative: the uri only exists so that two notifications about two sessions
+     * are distinct pending intents, and a `dshmobile://` link from outside the app may carry no
+     * extra at all.
+     */
+    private fun revealFromIntent(intent: Intent?) {
+        val fromExtra = intent?.getStringExtra(DshNotifications.EXTRA_SESSION_ID)
+        val fromUri = intent?.data
+            ?.takeIf { it.scheme == "dshmobile" }
+            ?.pathSegments
+            ?.takeIf { it.size >= 2 && it[it.size - 2] == "session" }
+            ?.last()
+        val sessionId = fromExtra?.takeIf { it.isNotBlank() }
+            ?: fromUri?.takeIf { it.isNotBlank() }
+        if (sessionId != null) sessionStore.revealSession(sessionId)
     }
 
     /**
