@@ -48,7 +48,9 @@ val sqzwxVersion: Int = runCatching {
     rootProject.file("fork-version.txt").readText().trim().toInt()
 }.getOrDefault(1)
 
-val dshVersionName: String = "$dshUpstreamBase+SQZWX.$sqzwxVersion"
+// Shaped exactly like the tag it was built from, so a device's "app info" screen and the release
+// page name the same build: `v0.16.0-sqzwx.4`.
+val dshVersionName: String = "v$dshUpstreamBase-sqzwx.$sqzwxVersion"
 
 /** Upstream's number in the high digits, ours in the low three. */
 val dshVersionCode: Int = dshUpstreamBase
