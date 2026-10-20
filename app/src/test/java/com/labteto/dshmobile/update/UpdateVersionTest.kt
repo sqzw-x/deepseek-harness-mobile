@@ -80,4 +80,24 @@ class UpdateVersionTest {
     fun `a release is still offered when the running version is unparseable`() {
         assertTrue(isNewerVersion("0.2.1", "unknown"))
     }
+
+    /** Our own counter is the only part that moves between two builds of the same upstream. */
+    @Test
+    fun `a later fork build is newer`() {
+        assertTrue(isNewerVersion("v0.16.0-sqzwx.5", "v0.16.0-sqzwx.4"))
+        assertFalse(isNewerVersion("v0.16.0-sqzwx.4", "v0.16.0-sqzwx.5"))
+        assertFalse(isNewerVersion("v0.16.0-sqzwx.4", "v0.16.0-sqzwx.4"))
+    }
+
+    @Test
+    fun `an upstream bump outranks any fork build of the older line`() {
+        assertTrue(isNewerVersion("v0.17.0-sqzwx.1", "v0.16.0-sqzwx.9"))
+        assertTrue(isNewerVersion("0.16.1", "v0.16.0-sqzwx.9"))
+    }
+
+    /** The bare upstream tag carries no fork counter, so it cannot outrank a fork build of it. */
+    @Test
+    fun `the plain upstream tag does not replace a fork build of the same release`() {
+        assertFalse(isNewerVersion("v0.16.0", "v0.16.0-sqzwx.9"))
+    }
 }

@@ -62,10 +62,14 @@ internal fun pickReleaseAssets(assets: List<ReleaseAsset>): Pair<ReleaseAsset?, 
 /**
  * Is [candidate] a later version than [current]?
  *
- * Compares the numeric core only, so a `v` prefix and any `-rc1`/`-beta` suffix are ignored — which
- * also means a pre-release of a version already installed does not count as newer. Anything
- * unparseable in a component reads as 0 rather than throwing: a malformed tag should mean "no
- * update", never a crash on a screen the user did not ask for.
+ * Compares two pieces: the numeric core, and — when both carry one — this fork's own counter in
+ * `-sqzwx.N`. The core alone cannot see our releases move: `v0.16.0-sqzwx.5` and
+ * `v0.16.0-sqzwx.4` both read as 0.16.0, so a newer build would be reported as already installed.
+ *
+ * A `v` prefix and any other `-rc1`/`-beta` suffix are ignored, which also means a pre-release of
+ * a version already installed does not count as newer. Anything unparseable reads as 0 rather
+ * than throwing: a malformed tag should mean "no update", never a crash on a screen the user did
+ * not ask for.
  *
  * A free function so the comparison can be tested without a network.
  */
@@ -77,15 +81,20 @@ internal fun isNewerVersion(candidate: String, current: String): Boolean {
         .split('.')
         .map { it.trim().toIntOrNull() ?: 0 }
 
+    fun forkIndex(value: String): Int? =
+        Regex("""-sqzwx\.(\d+)""").find(value.trim())?.groupValues?.getOrNull(1)?.toIntOrNull()
+
     val a = parts(candidate)
     val b = parts(current)
-    if (a.all { it == 0 }) return false
+    if (a.all { it == 0 } && forkIndex(candidate) == null) return false
     for (i in 0 until maxOf(a.size, b.size)) {
         val left = a.getOrElse(i) { 0 }
         val right = b.getOrElse(i) { 0 }
         if (left != right) return left > right
     }
-    return false
+    val forkA = forkIndex(candidate) ?: return false
+    val forkB = forkIndex(current) ?: return false
+    return forkA > forkB
 }
 
 /**
@@ -188,7 +197,7 @@ class UpdateChecker @Inject constructor(
     private companion object {
         /** Six hours: often enough to notice a release the same day, rare enough to be free. */
         const val AUTO_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
-        const val REPO = "sorsama/deepseek-harness-mobile"
+        const val REPO = "sqzw-x/deepseek-harness-mobile"
         const val LATEST_RELEASE_API = "https://api.github.com/repos/$REPO/releases/latest"
         const val RELEASES_URL = "https://github.com/$REPO/releases/latest"
     }
