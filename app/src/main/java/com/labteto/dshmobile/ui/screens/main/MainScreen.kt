@@ -83,6 +83,7 @@ fun MainScreen(onOpenSettings: () -> Unit) {
         drawerState = drawerState,
         drawerContent = {
             ChatListDrawer(
+                open = drawerState.isOpen,
                 onClose = { scope.launch { drawerState.close() } },
                 onOpenSettings = onOpenSettings,
                 onOpenAutomations = { automationSession = null; automationsOpen = true; scope.launch { drawerState.close() } },

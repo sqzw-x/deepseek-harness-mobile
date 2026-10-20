@@ -93,6 +93,7 @@ fun ChatListDrawer(
     onClose: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAutomations: () -> Unit = {},
+    open: Boolean = false,
 ) {
     val colors = DsTheme.colors
     val store = rememberSessionStore()
@@ -124,6 +125,19 @@ fun ChatListDrawer(
         .collectAsStateWithLifecycle(initialValue = emptySet<String>())
     // Subagent subtrees are transient and cheap to open again, so their state stays in memory.
     val collapsedSubtrees = remember { mutableStateMapOf<String, Boolean>() }
+
+    // The list is a snapshot of the harness, taken when this app connected. A session started
+    // from the web UI while the phone sits on another conversation is invisible until something
+    // asks again, so ask when the drawer opens, and keep asking while it stays open — picking a
+    // session is a look-at-the-list action, and a stale list is the one thing that breaks it.
+    LaunchedEffect(open, store.activeHostKey) {
+        if (!open) return@LaunchedEffect
+        store.refreshSessions()
+        while (true) {
+            delay(15_000)
+            store.refreshSessions()
+        }
+    }
 
     LaunchedEffect(query) {
         delay(250)
