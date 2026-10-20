@@ -17,15 +17,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -251,11 +252,15 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         // content whether or not the line has a link in it, and a text without them draws each
         // slot's source instead.
         RenderStats.addSelection()
-        // Plain text, not a selection container. Measured at ~300ms for the containers a single
-        // screen needs, and the one dismissal mechanism this app has for them — a shared token
-        // that re-keys each container — was never wired, so a selection could not be cleared at
-        // all. The row's own copy action is the way to take text out of here.
-        Text(result, style = style, inlineContent = inlineContent, modifier = modifier)
+        // Long-press selects a span of the answer. Re-keyed on the shared dismiss token: a tap
+        // anywhere in the transcript increments it, and rebuilding the container is what clears
+        // the selection — this Compose version has no dismiss-on-outside-tap of its own.
+        val dismissToken = LocalSelectionDismiss.current.value
+        key(dismissToken) {
+            SelectionContainer(modifier = modifier) {
+                Text(result, style = style, inlineContent = inlineContent)
+            }
+        }
         return
     }
     // `Text` with its own hit test rather than `ClickableText`: the pills are inline content, which

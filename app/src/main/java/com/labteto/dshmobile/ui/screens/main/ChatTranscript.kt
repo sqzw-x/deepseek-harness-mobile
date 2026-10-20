@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -37,6 +38,7 @@ import com.labteto.dshmobile.core.session.AssistantMessageNode
 import com.labteto.dshmobile.core.session.ConversationSnapshot
 import com.labteto.dshmobile.core.session.UserMessageNode
 import com.labteto.dshmobile.diag.RenderStats
+import com.labteto.dshmobile.ui.components.LocalSelectionDismiss
 import com.labteto.dshmobile.ui.components.DsButton
 import com.labteto.dshmobile.ui.components.DsButtonSize
 import com.labteto.dshmobile.ui.components.DsButtonVariant
@@ -242,6 +244,10 @@ internal fun ChatTranscript(
     // is being measured is the first one after the state swap, which is the one the reader waits
     // through.
     var laidOut by remember(sessionId) { mutableStateOf(false) }
+    // Shared by every row: a tap increments it and the selectable texts rebuild without their
+    // selection. Without a provider the token stays 0 forever and a selection cannot be cleared.
+    val selectionDismiss = remember { mutableIntStateOf(0) }
+    CompositionLocalProvider(LocalSelectionDismiss provides selectionDismiss) {
     LazyColumn(
         state = listState,
         modifier = modifier
@@ -320,6 +326,7 @@ internal fun ChatTranscript(
                 )
             }
         }
+    }
     }
 }
 

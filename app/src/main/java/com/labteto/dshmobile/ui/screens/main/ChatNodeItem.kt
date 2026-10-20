@@ -66,6 +66,7 @@ import com.labteto.dshmobile.ui.components.DisclosureRow
 import com.labteto.dshmobile.ui.components.DisclosureState
 import com.labteto.dshmobile.ui.components.DsPill
 import com.labteto.dshmobile.ui.components.FeatherIcons
+import com.labteto.dshmobile.ui.components.LocalSelectionDismiss
 import com.labteto.dshmobile.ui.components.MarkdownText
 import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.StateDotState
@@ -327,11 +328,17 @@ private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContex
     }
     val reasoningExpanded = remember(node.seq) { mutableStateMapOf<Int, Boolean>() }
     var actionsVisible by remember(node.seq) { mutableStateOf(false) }
+    // Bumping this before toggling means a tap after a long-press selection clears the selection
+    // first, instead of leaving it on screen with no way back.
+    val selectionDismiss = LocalSelectionDismiss.current
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !streaming) { actionsVisible = !actionsVisible },
+            .clickable(enabled = !streaming) {
+                selectionDismiss.intValue++
+                actionsVisible = !actionsVisible
+            },
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         node.blocks.forEachIndexed { index, block ->
