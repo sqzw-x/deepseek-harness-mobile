@@ -15,26 +15,74 @@ plugins {
  * upgrade at all. The code is derived from the name so it rises with semver on its own; the
  * fallback is what a local `assembleRelease` builds.
  */
-val dshVersionName: String = System.getenv("DSH_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "0.16.0"
+/** The tag a build is measured from, e.g. `v0.16.0-32-gdb9ba53`, or null outside a checkout. */
+val dshDescribe: String? = runCatching {
+    val process = ProcessBuilder("git", "describe", "--tags", "--always", "--dirty")
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val text = process.inputStream.bufferedReader().readText().trim()
+    process.waitFor()
+    text.takeIf { it.isNotEmpty() && !it.startsWith("fatal") }
+}.getOrNull()
 
-val dshVersionCode: Int = dshVersionName
-    .substringBefore('-')
+/**
+ * The upstream version this checkout is built on: the release workflow names it, a local build
+ * reads it off the nearest tag.
+ */
+val dshUpstreamVersion: String = System.getenv("DSH_VERSION_NAME")?.takeIf { it.isNotBlank() }
+    ?: dshDescribe?.removePrefix("v")?.takeIf { name -> name.firstOrNull()?.isDigit() == true }
+    ?: "0.16.0"
+
+/** `0.16.0-32-gabc123` and `0.16.0` both name release 0.16.0. */
+val dshUpstreamBase: String = dshUpstreamVersion
+    .split('-')
+    .first()
+
+/**
+ * Our own release counter, bumped by hand in `fork-version.txt` when this fork ships something.
+ * It is deliberately not derived from the commit count: merging upstream adds commits that are
+ * not ours, and the number has to keep meaning "the Nth build of this fork".
+ */
+val sqzwxVersion: Int = runCatching {
+    rootProject.file("fork-version.txt").readText().trim().toInt()
+}.getOrDefault(1)
+
+val dshVersionName: String = "$dshUpstreamBase+SQZWX.$sqzwxVersion"
+
+/** Upstream's number in the high digits, ours in the low three. */
+val dshVersionCode: Int = dshUpstreamBase
     .split('.')
     .mapNotNull { it.toIntOrNull() }
     .let { parts ->
         val major = parts.getOrElse(0) { 0 }
         val minor = parts.getOrElse(1) { 0 }
         val patch = parts.getOrElse(2) { 0 }
-        major * 10_000 + minor * 100 + patch
+        (major * 10_000 + minor * 100 + patch) * 1_000 + sqzwxVersion.coerceIn(0, 999)
     }
     .coerceAtLeast(1)
+
+/** `./gradlew bumpForkVersion` — one step of our own version. */
+tasks.register("bumpForkVersion") {
+    group = "versioning"
+    description = "Increments fork-version.txt"
+    doLast {
+        val file = rootProject.file("fork-version.txt")
+        val next = file.readText().trim().toInt() + 1
+        file.writeText("$next\n")
+        println("SQZWX version is now $next")
+    }
+}
 
 android {
     namespace = "com.labteto.dshmobile"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.labteto.dshmobile"
+        // Our own identity, not the upstream author's: the package name is what the device and
+        // the installer see, and keeping upstream's would make this build and a release signed
+        // with upstream's key mutually exclusive on one device.
+        applicationId = "com.sqzwx.dshmobile"
         minSdk = 26
         targetSdk = 35
         versionCode = dshVersionCode
