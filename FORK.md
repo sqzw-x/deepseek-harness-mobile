@@ -39,3 +39,13 @@
 - `AGENTS.md`：fork 的工作流、提交规范与文档层约定。
 - 版本号两段式：`0.16.0+SQZWX.3` —— 前半段跟上游 tag 走（release 工作流从 tag 设 `DSH_VERSION_NAME`，本地从 `git describe` 读），后半段是 `fork-version.txt` 里我们自己的发布序号，发版前 `./gradlew bumpForkVersion` 加一。`versionCode` 是上游编码乘一千再加这个序号，合上游不会把它打回去。
 - 包名是 `com.sqzwx.dshmobile`（debug 版为 `.debug` 后缀），不是上游作者的 `com.labteto.*`：装机器上看得到的身份归我们自己，也避免与官方签名的包互相排斥。
+
+### 发版
+
+1. `./gradlew bumpForkVersion` 把我们自己的序号加一，连同改动一起提交
+2. 打 tag：`git tag v0.16.0-sqzwx.4` —— 接口用 `-`，逗号用 `+` 会让版本推导切不开
+3. `git push origin main v0.16.0-sqzwx.4`
+4. Actions 跑 `Release APK`：单测、`assembleRelease`、lint、验签、生成 `SHA256SUMS.txt`，产出一个 **draft** Release
+5. 在网页上过一眼再点 Publish
+
+签名密钥存在仓库 secrets（`RELEASE_KEYSTORE` / `_PASSWORD` / `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD`），与本地构建用的是同一把，两条渠道的包可以互相覆盖。
