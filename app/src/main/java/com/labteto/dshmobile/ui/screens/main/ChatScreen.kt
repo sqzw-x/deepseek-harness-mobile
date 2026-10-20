@@ -522,25 +522,13 @@ fun ChatScreen(
                 }
                 // Above the composer rather than over it: the transcript is reversed, so the
                 // newest message is index 0 and being anywhere else means history is being read.
-                AnimatedVisibility(
+                JumpToLatest(
                     visible = tab == ChatTab.Chat && chatListState.firstVisibleItemIndex > 0,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = 16.dp, bottom = 12.dp),
-                    enter = fadeIn(DsAnimations.fade),
-                    exit = fadeOut(DsAnimations.fade),
-                ) {
-                    FloatingActionButton(
-                        onClick = { scope.launch { chatListState.animateScrollToItem(0) } },
-                        containerColor = DsTheme.colors.bgLayer2,
-                        contentColor = DsTheme.colors.labelPrimary,
-                    ) {
-                        Icon(
-                            Icons.Filled.KeyboardArrowDown,
-                            contentDescription = stringResource(R.string.chat_jump_to_latest),
-                        )
-                    }
-                }
+                    onClick = { scope.launch { chatListState.animateScrollToItem(0) } },
+                )
                 }
 
                 conversation?.let { conv ->
@@ -837,3 +825,30 @@ internal fun decodePick(bytes: ByteArray): DecodedPick {
 
 /** The composer thumbnail is 56dp; decoding much past that is wasted memory. */
 private const val PREVIEW_WIDTH_PX = 224
+
+/**
+ * Jumps the transcript back to its newest message, which in a reversed list is index 0.
+ *
+ * A composable of its own because the scoped `AnimatedVisibility` overloads resolve differently
+ * depending on the enclosing layout, and this one sits in a `Box` inside a `Column`.
+ */
+@Composable
+private fun JumpToLatest(visible: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(DsAnimations.fade),
+        exit = fadeOut(DsAnimations.fade),
+    ) {
+        FloatingActionButton(
+            onClick = onClick,
+            containerColor = DsTheme.colors.bgLayer2,
+            contentColor = DsTheme.colors.labelPrimary,
+        ) {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = stringResource(R.string.chat_jump_to_latest),
+            )
+        }
+    }
+}
