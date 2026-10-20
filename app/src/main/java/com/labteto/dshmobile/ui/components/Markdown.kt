@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -247,18 +246,15 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         pills + maths
     }
     if (!hasLinks) {
-        // Nothing to tap, so the text is laid out inside a SelectionContainer instead: long-press
-        // selects and the platform handles the copy affordance. A ClickableText swallows the
-        // long-press, which is why the two cannot share one branch. Re-keyed on the shared dismiss
-        // token so a tap elsewhere in the transcript clears the selection (see ChatTranscript).
-        // The inline slots are still handed over: a formula is inline content whether or not the
-        // line has a link in it, and a text without them draws each slot's source instead.
-        val dismissToken = LocalSelectionDismiss.current.value
+        // Nothing to tap, so the text is laid out plainly: a ClickableText would swallow the tap
+        // that belongs to the row. The inline slots are still handed over — a formula is inline
+        // content whether or not the line has a link in it, and a text without them draws each
+        // slot's source instead.
         RenderStats.addSelection()
-        // A/B: the selection container is the only thing in this branch that is not plain text
-        // layout, so it is the thing being measured. Long-press selection is off until this is
-        // put back.
-        @Suppress("UNUSED_EXPRESSION") dismissToken
+        // Plain text, not a selection container. Measured at ~300ms for the containers a single
+        // screen needs, and the one dismissal mechanism this app has for them — a shared token
+        // that re-keys each container — was never wired, so a selection could not be cleared at
+        // all. The row's own copy action is the way to take text out of here.
         Text(result, style = style, inlineContent = inlineContent, modifier = modifier)
         return
     }

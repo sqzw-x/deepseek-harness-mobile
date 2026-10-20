@@ -35,11 +35,39 @@ import ru.noties.jlatexmath.JLatexMathDrawable
  * as its own source rather than dropped — a reply is not a place to hide text.
  */
 
+/**
+ * Rendered formulas, kept across screens.
+ *
+ * JLaTeXMath parses and lays out TeX on a canvas, which costs tens of milliseconds per formula —
+ * measured at ~1.9s for twenty of them on one screen. The composable-level `remember` next to each
+ * call cannot help there: switching sessions builds new composables, so every formula is rendered
+ * again for content that has not changed. A drawable is immutable once built, so the same one can
+ * be handed to any number of painters.
+ *
+ * Bounded because a drawable holds a bitmap: a long transcript of formulas should not grow without
+ * limit in a process that lives for days.
+ */
+private val mathDrawables = object : LinkedHashMap<String, Drawable?>(32, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Drawable?>): Boolean =
+        size > MAX_CACHED_FORMULAS
+}
+
+private const val MAX_CACHED_FORMULAS = 48
+
 /** Renders [tex] at [sizePx], or null when it is not valid TeX. */
-internal fun mathDrawable(tex: String, sizePx: Float, color: Color): Drawable? =
-    com.labteto.dshmobile.diag.RenderStats.math {
+internal fun mathDrawable(tex: String, sizePx: Float, color: Color): Drawable? {
+    val key = "$sizePx|${color.value}|$tex"
+    synchronized(mathDrawables) {
+        // `containsKey` rather than a null check: failed TeX is worth remembering too, so a reply
+        // full of it does not re-parse on every scroll.
+        if (mathDrawables.containsKey(key)) return mathDrawables[key]
+    }
+    val drawable = com.labteto.dshmobile.diag.RenderStats.math {
         mathDrawableUnmeasured(tex, sizePx, color)
     }
+    synchronized(mathDrawables) { mathDrawables[key] = drawable }
+    return drawable
+}
 
 private fun mathDrawableUnmeasured(tex: String, sizePx: Float, color: Color): Drawable? = runCatching {
     JLatexMathDrawable.builder(tex)
