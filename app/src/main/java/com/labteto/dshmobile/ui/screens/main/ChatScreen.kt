@@ -6,6 +6,7 @@ import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -21,7 +22,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Surface
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -480,6 +486,7 @@ fun ChatScreen(
                 // reserve enough for reference chips, a line of text and the fixed action row.
                 val composerMaxHeight = (maxHeight * 0.6f).coerceAtLeast(180.dp)
                 Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                 AnimatedContent(
                     targetState = tab,
                     transitionSpec = {
@@ -490,7 +497,7 @@ fun ChatScreen(
                             )
                             .togetherWith(fadeOut(DsAnimations.fade)) using SizeTransform(clip = false)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxSize(),
                     label = "chatTab",
                 ) { current ->
                     when (current) {
@@ -512,6 +519,28 @@ fun ChatScreen(
                             listState = trajectoryListState,
                         )
                     }
+                }
+                // Above the composer rather than over it: the transcript is reversed, so the
+                // newest message is index 0 and being anywhere else means history is being read.
+                AnimatedVisibility(
+                    visible = tab == ChatTab.Chat && chatListState.firstVisibleItemIndex > 0,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 12.dp),
+                    enter = fadeIn(DsAnimations.fade),
+                    exit = fadeOut(DsAnimations.fade),
+                ) {
+                    FloatingActionButton(
+                        onClick = { scope.launch { chatListState.animateScrollToItem(0) } },
+                        containerColor = DsTheme.colors.bgLayer2,
+                        contentColor = DsTheme.colors.labelPrimary,
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.chat_jump_to_latest),
+                        )
+                    }
+                }
                 }
 
                 conversation?.let { conv ->

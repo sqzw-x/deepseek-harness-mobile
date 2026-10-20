@@ -109,6 +109,7 @@
     <string name="chat_composer_attach">Adjuntar imagen</string>
     <string name="chat_composer_remove_image">Quitar imagen</string>
     <string name="chat_empty_title">Empieza a trabajar con tu Harness</string>
+    <string name="chat_jump_to_latest">Ir a lo más reciente</string>
     <string name="chat_empty_hint">Envía un mensaje para comenzar un nuevo turno.</string>
     <string name="chat_load_older">Cargar mensajes anteriores</string>
     <string name="chat_loading_older">Cargando mensajes anteriores…</string>

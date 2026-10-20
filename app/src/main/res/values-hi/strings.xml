@@ -109,6 +109,7 @@
     <string name="chat_composer_attach">छवि संलग्न करें</string>
     <string name="chat_composer_remove_image">छवि हटाएं</string>
     <string name="chat_empty_title">अपने Harness के साथ काम शुरू करें</string>
+    <string name="chat_jump_to_latest">नवीनतम पर जाएं</string>
     <string name="chat_empty_hint">नया टर्न शुरू करने के लिए एक संदेश भेजें।</string>
     <string name="chat_load_older">पुराने संदेश लोड करें</string>
     <string name="chat_loading_older">पुराने संदेश लोड हो रहे हैं…</string>

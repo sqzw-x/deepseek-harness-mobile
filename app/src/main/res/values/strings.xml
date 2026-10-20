@@ -150,6 +150,7 @@
     <string name="chat_composer_attach">Attach image</string>
     <string name="chat_composer_remove_image">Remove image</string>
     <string name="chat_empty_title">Start working with your harness</string>
+    <string name="chat_jump_to_latest">Scroll to latest</string>
     <string name="chat_empty_hint">Send a message to begin a new turn.</string>
     <string name="chat_load_older">Load older messages</string>
     <string name="chat_loading_older">Loading earlier messages…</string>

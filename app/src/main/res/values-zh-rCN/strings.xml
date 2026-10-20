@@ -109,6 +109,7 @@
     <string name="chat_composer_attach">附加图片</string>
     <string name="chat_composer_remove_image">移除图片</string>
     <string name="chat_empty_title">开始使用你的 Harness</string>
+    <string name="chat_jump_to_latest">跳到最新</string>
     <string name="chat_empty_hint">发送一条消息即可开始新一轮。</string>
     <string name="chat_load_older">加载更早的消息</string>
     <string name="chat_loading_older">正在加载更早的消息…</string>

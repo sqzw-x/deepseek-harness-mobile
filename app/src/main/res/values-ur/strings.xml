@@ -109,6 +109,7 @@
     <string name="chat_composer_attach">تصویر منسلک کریں</string>
     <string name="chat_composer_remove_image">تصویر ہٹائیں</string>
     <string name="chat_empty_title">اپنے Harness کے ساتھ کام شروع کریں</string>
+    <string name="chat_jump_to_latest">تازہ ترین پر جائیں</string>
     <string name="chat_empty_hint">نیا ٹرن شروع کرنے کے لیے پیغام بھیجیں۔</string>
     <string name="chat_load_older">پرانے پیغامات لوڈ کریں</string>
     <string name="chat_loading_older">پرانے پیغامات لوڈ ہو رہے ہیں…</string>
