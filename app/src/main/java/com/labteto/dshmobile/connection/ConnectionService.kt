@@ -10,6 +10,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.labteto.dshmobile.MainActivity
 import com.labteto.dshmobile.R
+import com.labteto.dshmobile.diag.BackgroundTrace
 import com.labteto.dshmobile.notify.DshNotifications
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -25,20 +26,27 @@ class ConnectionService : Service() {
 
     @Inject lateinit var connectionManager: ConnectionManager
     @Inject lateinit var notifications: DshNotifications
+    @Inject lateinit var trace: BackgroundTrace
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            trace.record(BackgroundTrace.Kind.SERVICE, "stop")
             stopSelf()
             return START_NOT_STICKY
         }
+        // `restored` is the START_STICKY case after the process was killed: the system brings the
+        // service back with no intent, and the notification below is built from a ConnectionManager
+        // that has no host. Worth recording, because it looks like a live connection from outside.
+        trace.record(BackgroundTrace.Kind.SERVICE, if (intent == null) "restored" else "start")
         startForeground(NOTIFICATION_ID, buildNotification())
         return START_STICKY
     }
 
     override fun onDestroy() {
         // The service dying does not tear the connection down; the manager owns it.
+        trace.record(BackgroundTrace.Kind.SERVICE, "destroyed")
         super.onDestroy()
     }
 

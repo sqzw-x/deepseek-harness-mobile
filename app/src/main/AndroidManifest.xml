@@ -18,6 +18,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!--
+        Only used to *ask*: the settings card opens the system dialog that adds this app to the
+        battery-optimisation allowlist. Without it that dialog cannot be raised at all; the app
+        still cannot grant itself anything.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!--
         Defined by Termux, not by Android: it lets this app run a command inside Termux, which is
         how "this phone" mode starts and stops a harness on the device. Termux declares it
         `dangerous`, so the system asks the user, and the app only asks at the moment Start,

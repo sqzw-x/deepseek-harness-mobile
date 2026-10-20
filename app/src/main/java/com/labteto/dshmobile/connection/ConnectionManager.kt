@@ -17,6 +17,7 @@ import com.labteto.dshmobile.core.wire.RemoteStreamMux
 import com.labteto.dshmobile.core.wire.dto.RemoteEventFrame
 import com.labteto.dshmobile.core.wire.TransportFailure
 import com.labteto.dshmobile.core.wire.TransportFailures
+import com.labteto.dshmobile.diag.BackgroundTrace
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +69,7 @@ class ConnectionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val clientFactory: HarnessClientFactory,
     private val hostsStore: HostsStore,
+    private val trace: BackgroundTrace,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -102,10 +104,15 @@ class ConnectionManager @Inject constructor(
 
     private val sinks = object : LoopSinks {
         override fun onEventFrame(frame: RemoteEventFrame) {
+            // This funnel is the only place every `$events` frame passes through, which is why the
+            // background trace listens here rather than at either consumer.
+            trace.record(BackgroundTrace.Kind.EVENT, describe(frame))
             eventFrames.tryEmit(frame)
         }
 
         override fun onConnected(generation: HostGeneration) {
+            // No phase entry here: `onStateChange(CONNECTED)` follows immediately and records the
+            // same fact, and two identical rows in a twelve-row panel is a row wasted.
             this@ConnectionManager.generation = generation
             val host = activeHost
             if (host != null) scope.launch { hostsStore.touchHost(host.id) }
@@ -123,6 +130,7 @@ class ConnectionManager @Inject constructor(
 
         override fun onStateChange(state: ConnectionState) {
             val current = _state.value
+            trace.record(BackgroundTrace.Kind.PHASE, state.name.lowercase())
             val phase = when {
                 state == ConnectionState.CONNECTED -> ConnectionPhase.CONNECTED
                 // The loop opens every generation the same way, but the first one is not a
@@ -145,6 +153,7 @@ class ConnectionManager @Inject constructor(
         }
 
         override fun onGenerationFailed(attempt: Int, failure: GenerationFailure) {
+            trace.record(BackgroundTrace.Kind.PHASE, "failed ${failure::class.simpleName}")
             val host = activeHost
             _state.value = _state.value.copy(
                 failure = ConnectFailure.from(failure, relay = host?.isRelay == true),
@@ -181,6 +190,7 @@ class ConnectionManager @Inject constructor(
     }
 
     fun disconnect() {
+        trace.record(BackgroundTrace.Kind.PHASE, "disconnected")
         loop?.stop()
         loop = null
         api = null
@@ -271,6 +281,20 @@ class ConnectionManager @Inject constructor(
 
     private fun stopService() {
         context.stopService(Intent(context, ConnectionService::class.java))
+    }
+
+    /**
+     * A one-word label for one `$events` frame, for the background trace.
+     *
+     * Carries the event name where there is one: "an `api-session/status` arrived at 12:31" is the
+     * fact that tells a dead socket from a quiet host, and a bare frame type would not.
+     */
+    private fun describe(frame: RemoteEventFrame): String = when (frame) {
+        is RemoteEventFrame.Emit -> frame.event
+        is RemoteEventFrame.Waterfall -> frame.event
+        is RemoteEventFrame.Cancel -> "cancel"
+        is RemoteEventFrame.Ready -> "ready"
+        is RemoteEventFrame.Unknown -> frame.type
     }
 
     private fun <T> runBlockingRead(block: suspend () -> T): T =

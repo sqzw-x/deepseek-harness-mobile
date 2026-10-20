@@ -317,6 +317,7 @@ class SessionStore @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context,
     private val connectionManager: ConnectionManager,
     private val hostsStore: HostsStore,
+    private val trace: com.labteto.dshmobile.diag.BackgroundTrace,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
@@ -1124,6 +1125,9 @@ class SessionStore @Inject constructor(
      * a notification or a list read.
      */
     private fun handleSessionEvent(sessionId: String, envelope: SessionEventEnvelope) {
+        // The open session's follow stream, recorded separately from `$events`: silence here but
+        // traffic there means the socket is healthy and the host is simply not notifying.
+        trace.record(com.labteto.dshmobile.diag.BackgroundTrace.Kind.SESSION, envelope.type)
         when (envelope.type) {
             "turn/start" -> {
                 setRunning(sessionId, true)

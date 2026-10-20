@@ -13,6 +13,7 @@ import com.labteto.dshmobile.core.notify.CompletionEvent
 import com.labteto.dshmobile.core.session.SessionEventEnvelope
 import com.labteto.dshmobile.core.wire.dto.RemoteEventFrame
 import com.labteto.dshmobile.data.SessionStore
+import com.labteto.dshmobile.diag.BackgroundTrace
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,6 +45,7 @@ class NotificationObserver @Inject constructor(
     private val connectionManager: ConnectionManager,
     private val notifications: DshNotifications,
     private val hostsStore: HostsStore,
+    private val trace: BackgroundTrace,
     @ApplicationContext private val context: Context,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -90,11 +92,17 @@ class NotificationObserver @Inject constructor(
                 private var startedActivities = 0
 
                 override fun onActivityStarted(activity: Activity) {
-                    if (++startedActivities == 1) appInForeground = true
+                    if (++startedActivities == 1) {
+                        appInForeground = true
+                        trace.record(BackgroundTrace.Kind.FOREGROUND, "")
+                    }
                 }
 
                 override fun onActivityStopped(activity: Activity) {
-                    if (--startedActivities == 0) appInForeground = false
+                    if (--startedActivities == 0) {
+                        appInForeground = false
+                        trace.record(BackgroundTrace.Kind.BACKGROUND, "")
+                    }
                 }
 
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}

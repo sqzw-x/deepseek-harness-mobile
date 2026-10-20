@@ -1,6 +1,12 @@
 package com.labteto.dshmobile.ui.screens.settings
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.labteto.dshmobile.connection.AppSettings
@@ -17,6 +23,7 @@ import com.labteto.dshmobile.termux.TermuxHarnessController
 import com.labteto.dshmobile.ui.screens.connect.LoopbackStatus
 import com.labteto.dshmobile.ui.screens.connect.toLoopbackStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +34,17 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/**
+ * What the system currently allows this app to do in the background.
+ *
+ * Deliberately two flags rather than one "is it fine" answer: they are separate switches in two
+ * separate places, and a user told only "not exempt" would not know which one to change.
+ */
+data class KeepAliveStatus(
+    val ignoringBatteryOptimizations: Boolean,
+    val backgroundRestricted: Boolean,
+)
 
 /**
  * App-language choices: the 11 shipped locales, plus following the system.
@@ -59,7 +77,69 @@ class SettingsViewModel @Inject constructor(
     private val updateChecker: UpdateChecker,
     private val termux: TermuxHarnessController,
     private val discoveryEngine: DiscoveryEngine,
+    @ApplicationContext private val context: Context,
+    trace: com.labteto.dshmobile.diag.BackgroundTrace,
 ) : ViewModel() {
+
+    private val _keepAlive = MutableStateFlow(readKeepAlive())
+    val keepAlive: StateFlow<KeepAliveStatus> = _keepAlive.asStateFlow()
+
+    /**
+     * Re-read the two switches, after the system dialog this screen opens has been dismissed.
+     *
+     * Cheap enough to call on every resume: both are a binder call to a cached value.
+     */
+    fun refreshKeepAlive() {
+        _keepAlive.value = readKeepAlive()
+    }
+
+    /**
+     * The two flags a stock system exposes, which are not the whole story.
+     *
+     * [ignoringBatteryOptimizations] is the AOSP allowlist that exempts this app from Doze and App
+     * Standby. [backgroundRestricted] is the per-app "restrict battery usage" switch from App info.
+     * A vendor power manager can freeze the process with both of them in the permissive state,
+     * which is why the card also names the switch we cannot read.
+     */
+    private fun readKeepAlive(): KeepAliveStatus {
+        val power = context.getSystemService(PowerManager::class.java)
+        val activity = context.getSystemService(ActivityManager::class.java)
+        return KeepAliveStatus(
+            ignoringBatteryOptimizations = power?.isIgnoringBatteryOptimizations(context.packageName) == true,
+            backgroundRestricted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                activity?.isBackgroundRestricted == true,
+        )
+    }
+
+    /** Open the system dialog that adds this app to the battery-optimisation allowlist. */
+    fun requestBatteryExemption() {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
+    /**
+     * The per-app system page, where a vendor keeps the switch that actually matters.
+     *
+     * There is no public action for a launch manager, so this is as close as a client can get:
+     * the user has to find "app launch" from here.
+     */
+    fun openAppSettings() {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
+    /** What this process has been doing in the background; see [BackgroundTrace]. */
+    val backgroundTrace: StateFlow<com.labteto.dshmobile.diag.BackgroundTrace.Snapshot> = trace.snapshot
 
     /** The manual update check; see [UpdateChecker.checkNow]. */
     suspend fun checkForUpdateNow(currentVersion: String): UpdateChecker.CheckOutcome =

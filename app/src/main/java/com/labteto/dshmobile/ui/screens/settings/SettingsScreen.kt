@@ -59,6 +59,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.labteto.dshmobile.BuildConfig
 import com.labteto.dshmobile.R
@@ -69,6 +71,7 @@ import com.labteto.dshmobile.core.DshCore
 import com.labteto.dshmobile.core.wire.dto.PluginFiberPhase
 import com.labteto.dshmobile.core.wire.dto.PluginInventoryEntry
 import com.labteto.dshmobile.core.wire.dto.PluginInventorySnapshot
+import com.labteto.dshmobile.diag.BackgroundTrace
 import com.labteto.dshmobile.termux.HarnessControl
 import com.labteto.dshmobile.termux.TermuxPaths
 import com.labteto.dshmobile.ui.screens.connect.LoopbackStatus
@@ -89,6 +92,7 @@ import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.StateDotState
 import com.labteto.dshmobile.ui.components.ToggleRow
 import com.labteto.dshmobile.ui.components.rememberDsToast
+import com.labteto.dshmobile.ui.components.formatDurationMs
 import com.labteto.dshmobile.ui.rememberSessionStore
 import com.labteto.dshmobile.ui.theme.DsShapes
 import com.labteto.dshmobile.ui.theme.DsSpacing
@@ -260,6 +264,9 @@ fun SettingsScreen(onClose: () -> Unit, viewModel: SettingsViewModel = hiltViewM
                         settings.keepConnectedInBackground,
                         stringResource(R.string.settings_background_hint),
                     ) { viewModel.set { it.copy(keepConnectedInBackground = !it.keepConnectedInBackground) } }
+                    // Only under the toggle that makes it matter: these switches are the ones
+                    // that decide whether that toggle does anything on this device.
+                    if (settings.keepConnectedInBackground) KeepAliveRows(viewModel)
                 }
 
                 SettingsCard(stringResource(R.string.settings_harness)) {
@@ -364,6 +371,8 @@ fun SettingsScreen(onClose: () -> Unit, viewModel: SettingsViewModel = hiltViewM
                     }
                 }
 
+                BackgroundTraceCard(viewModel)
+
                 Spacer(Modifier.height(DsSpacing.xlarge))
                 }
             }
@@ -406,6 +415,157 @@ fun SettingsScreen(onClose: () -> Unit, viewModel: SettingsViewModel = hiltViewM
         }
     }
 }
+
+/**
+ * What this process did while the screen was off.
+ *
+ * Exists to separate three causes that look identical from outside: a frozen process, a socket
+ * that stopped delivering, and a harness that simply had nothing to say. [BackgroundTrace] holds
+ * the facts; this only lays them out. The PID is the load-bearing line — a changed PID after a
+ * stretch in the background is proof the process was killed rather than frozen, and no amount of
+ * frame accounting can show that.
+ */
+@Composable
+private fun BackgroundTraceCard(viewModel: SettingsViewModel) {
+    val trace by viewModel.backgroundTrace.collectAsStateWithLifecycle()
+    val colors = DsTheme.colors
+    // Stamped per emission rather than ticked: every row is a clock time, so a timer of its own
+    // would only animate "how long ago" between facts.
+    val now = remember(trace) { System.currentTimeMillis() }
+    val clock = remember { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US) }
+    fun at(ms: Long): String = clock.format(java.util.Date(ms))
+
+    SettingsCard(stringResource(R.string.diag_title)) {
+        Text(
+            stringResource(R.string.diag_process, trace.pid, formatDurationMs(now - trace.startedAt)),
+            style = DsType.std14,
+            color = colors.labelPrimary,
+        )
+        Text(
+            if (trace.foreground) {
+                stringResource(R.string.diag_state_foreground)
+            } else {
+                stringResource(R.string.diag_state_background, at(trace.currentWindow?.since ?: trace.startedAt))
+            },
+            style = DsType.small13,
+            color = colors.labelSecondary,
+        )
+        Text(
+            stringResource(
+                R.string.diag_last_event,
+                trace.lastEventAt?.let(::at) ?: stringResource(R.string.diag_none),
+            ),
+            style = DsType.small13,
+            color = colors.labelSecondary,
+        )
+        val open = trace.currentWindow
+        val window = open ?: trace.lastWindow
+        if (window != null) {
+            Text(
+                if (open != null) {
+                    stringResource(R.string.diag_window_now, window.events, formatDurationMs(window.longestSilenceMs))
+                } else {
+                    stringResource(
+                        R.string.diag_window_last,
+                        at(window.since),
+                        at(window.until),
+                        window.events,
+                        formatDurationMs(window.longestSilenceMs),
+                    )
+                },
+                style = DsType.small13,
+                color = colors.labelSecondary,
+            )
+            // Always shown, including the zero: "the device was awake the whole time" is what
+            // separates a starved process from a sleeping machine, and hiding it at zero would
+            // hide exactly the case worth reading.
+            Text(
+                stringResource(R.string.diag_sleep, formatDurationMs(window.asleepMs)),
+                style = DsType.small13,
+                color = colors.labelTertiary,
+            )
+        }
+        if (trace.entries.isNotEmpty()) {
+            Text(
+                stringResource(R.string.diag_entries),
+                style = DsType.caption11Strong,
+                color = colors.labelTertiary,
+                modifier = Modifier.padding(top = DsSpacing.xsmall),
+            )
+            trace.entries.take(DIAG_ROWS).forEach { entry ->
+                val detail = if (entry.detail.isEmpty()) "" else " · ${entry.detail}"
+                Text(
+                    "${at(entry.at)} · ${diagKindLabel(entry.kind)}$detail",
+                    style = DsType.caption11,
+                    color = colors.labelTertiary,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Whether the system will actually let the process keep running behind the toggle above.
+ *
+ * Two rows and one route into the system page where the rest of the policy lives. The vendor
+ * switch that decides the outcome on some ROMs cannot be read or flipped from here.
+ */
+@Composable
+private fun KeepAliveRows(viewModel: SettingsViewModel) {
+    val status by viewModel.keepAlive.collectAsStateWithLifecycle()
+    // The exemption is granted in a system dialog, which means it changes while this screen is
+    // covered by it — so the state is re-read on the way back rather than once on entry.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshKeepAlive() }
+    LabelledValue(
+        stringResource(R.string.keepalive_battery),
+        if (status.ignoringBatteryOptimizations) {
+            stringResource(R.string.keepalive_exempt)
+        } else {
+            stringResource(R.string.keepalive_blocked)
+        },
+    )
+    LabelledValue(
+        stringResource(R.string.keepalive_background),
+        if (status.backgroundRestricted) {
+            stringResource(R.string.keepalive_blocked)
+        } else {
+            stringResource(R.string.keepalive_free)
+        },
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(DsSpacing.small)) {
+        if (!status.ignoringBatteryOptimizations) {
+            DsButton(
+                text = stringResource(R.string.keepalive_request),
+                onClick = viewModel::requestBatteryExemption,
+                variant = DsButtonVariant.Outline,
+                size = DsButtonSize.Small,
+            )
+        }
+        DsButton(
+            text = stringResource(R.string.keepalive_open_settings),
+            onClick = viewModel::openAppSettings,
+            variant = DsButtonVariant.Ghost,
+            size = DsButtonSize.Small,
+        )
+    }
+}
+
+/** Rows kept visible: enough to cover one background stretch without turning the page into a log. */
+private const val DIAG_ROWS = 12
+
+@Composable
+private fun diagKindLabel(kind: BackgroundTrace.Kind): String = stringResource(
+    when (kind) {
+        BackgroundTrace.Kind.PROCESS -> R.string.diag_kind_process
+        BackgroundTrace.Kind.FOREGROUND -> R.string.diag_kind_foreground
+        BackgroundTrace.Kind.BACKGROUND -> R.string.diag_kind_background
+        BackgroundTrace.Kind.EVENT -> R.string.diag_kind_event
+        BackgroundTrace.Kind.SESSION -> R.string.diag_kind_session
+        BackgroundTrace.Kind.PHASE -> R.string.diag_kind_phase
+        BackgroundTrace.Kind.SERVICE -> R.string.diag_kind_service
+        BackgroundTrace.Kind.TICK -> R.string.diag_kind_tick
+    },
+)
 
 /** One settings group as a raised card, so groups read as blocks rather than a running list. */
 @Composable
