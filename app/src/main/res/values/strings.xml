@@ -341,6 +341,7 @@
     <string name="diag_kind_phase">link</string>
     <string name="diag_kind_service">svc</string>
     <string name="diag_kind_tick">tick</string>
+    <string name="diag_kind_switch">switch</string>
     <string name="trajectory_title">Trajectory</string>
     <string name="trajectory_timeline">Timeline</string>
     <string name="trajectory_ledger">Ledger</string>

@@ -8,6 +8,7 @@ import android.util.Log
 import com.labteto.dshmobile.connection.ConnectionManager
 import com.labteto.dshmobile.connection.ConnectionPhase
 import com.labteto.dshmobile.connection.HostsStore
+import com.labteto.dshmobile.diag.BackgroundTrace
 import com.labteto.dshmobile.core.session.AssistantLiveState
 import com.labteto.dshmobile.core.session.ChunkRows
 import com.labteto.dshmobile.core.session.ConversationSnapshot
@@ -618,6 +619,14 @@ class SessionStore @Inject constructor(
      * the network answers, and for a running session what it paints is already current.
      */
     private val sessionCaches = LinkedHashMap<String, SessionCache>()
+
+    // Where a session switch spends its time, split at the publish: everything before it is the
+    // fold on a background thread, everything after is composition and layout on the main one.
+    // The two need different fixes, and from the outside they look like the same one-second wait.
+    @Volatile private var switchTapAt = 0L
+    @Volatile private var switchPublishedAt = 0L
+    @Volatile private var switchEvents = 0
+    @Volatile private var switchCached = false
 
     private class SessionCache(val sessionId: String) {
         val events = ArrayDeque<SessionEventEnvelope>()
@@ -1569,6 +1578,31 @@ class SessionStore @Inject constructor(
     private fun applyWorkspaceValue(value: WorkspaceValue) = upsertWorkspace(value.workspace)
 
     /**
+     * The transcript has been laid out, so the wait the reader felt is over.
+     *
+     * Split out from the fold on purpose: recorded as `fold=` (background) and `render=`
+     * (main thread) because a cache hit makes the first number small and can leave the second
+     * untouched, and only the numbers can say which one the reader is still waiting for.
+     */
+    fun markSessionSwitchRendered(rows: Int) {
+        val tapped = switchTapAt
+        val published = switchPublishedAt
+        if (tapped == 0L || published == 0L) return
+        val now = android.os.SystemClock.uptimeMillis()
+        trace.record(
+            BackgroundTrace.Kind.SWITCH,
+            "fold=${published - tapped}ms render=${now - published}ms " +
+                "rows=$rows events=$switchEvents cached=$switchCached " +
+                "pre=" + (com.labteto.dshmobile.diag.RenderStats.firstRowAt()
+                    .takeIf { it > 0 }?.minus(published) ?: -1) + "ms " +
+                com.labteto.dshmobile.diag.RenderStats.rowSummary() + " " +
+                com.labteto.dshmobile.diag.RenderStats.summary(),
+        )
+        switchTapAt = 0L
+        switchPublishedAt = 0L
+    }
+
+    /**
      * Show the session a notification pointed at.
      *
      * Connected: open it now. Not connected yet: leave it pending, and [baseline] opens it instead
@@ -1585,6 +1619,7 @@ class SessionStore @Inject constructor(
     }
 
     suspend fun openSession(sessionId: String) = withContext(Dispatchers.Default) {
+        switchTapAt = android.os.SystemClock.uptimeMillis()
         val api = apiOrNull() ?: return@withContext
         _loadOlderFailed.value = false
         var wake: String? = null
@@ -1632,6 +1667,10 @@ class SessionStore @Inject constructor(
             // Read here, acted on below: it is the session being left, and `currentId` no longer
             // names it by the time the streams are started.
             wake = if (same) null else left?.takeIf { runningBySession[it] == true }
+            switchEvents = currentEvents.size
+            switchCached = seeded.isNotEmpty()
+            switchPublishedAt = android.os.SystemClock.uptimeMillis()
+            com.labteto.dshmobile.diag.RenderStats.reset()
         }
         // A session that is still running keeps producing after the reader leaves it.
         wake?.let(::startWatcher)

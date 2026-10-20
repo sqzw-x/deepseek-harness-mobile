@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">连接</string>
     <string name="diag_kind_service">服务</string>
     <string name="diag_kind_tick">心跳</string>
+    <string name="diag_kind_switch">切换</string>
     <string name="trajectory_title">轨迹</string>
     <string name="trajectory_timeline">时间线</string>
     <string name="trajectory_ledger">台账</string>

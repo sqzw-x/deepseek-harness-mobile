@@ -26,14 +26,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.core.session.AssistantMessageNode
 import com.labteto.dshmobile.core.session.ConversationSnapshot
 import com.labteto.dshmobile.core.session.UserMessageNode
+import com.labteto.dshmobile.diag.RenderStats
 import com.labteto.dshmobile.ui.components.DsButton
 import com.labteto.dshmobile.ui.components.DsButtonSize
 import com.labteto.dshmobile.ui.components.DsButtonVariant
@@ -101,6 +104,7 @@ internal fun ChatTranscript(
     context: ChatNodeContext,
     listState: LazyListState,
     onLoadOlder: () -> Unit,
+    onLaidOut: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Only the nodes that draw something: a zero-height item still costs its 4dp gap, and a turn's
@@ -123,6 +127,14 @@ internal fun ChatTranscript(
     // also where the list starts, so this only has to undo a position inherited from the session
     // that was open before. Following the tail is handled just below, where the anchoring the
     // reversal buys is overridden only when it would otherwise cost the reader the newest row.
+    // Placement animation is for rows that arrive into a list the reader is already looking at.
+    // Right after a session change every row is new at once, and animating that many entries is
+    // work the first frame pays for and the reader never asked for.
+    var animateRows by remember(sessionId) { mutableStateOf(false) }
+    LaunchedEffect(sessionId) {
+        withFrameNanos { }
+        animateRows = true
+    }
     var lastSession by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(sessionId) {
         if (sessionId == lastSession) return@LaunchedEffect
@@ -226,9 +238,20 @@ internal fun ChatTranscript(
         return
     }
 
+    // One report per session change: `onGloballyPositioned` fires on every layout pass, and what
+    // is being measured is the first one after the state swap, which is the one the reader waits
+    // through.
+    var laidOut by remember(sessionId) { mutableStateOf(false) }
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .onGloballyPositioned {
+                if (!laidOut && sessionId != null) {
+                    laidOut = true
+                    onLaidOut(rows.size)
+                }
+            },
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         // Newest first, so the row the viewport anchors on is the one that grows.
         reverseLayout = true,
@@ -266,11 +289,18 @@ internal fun ChatTranscript(
                     }
                 },
             ) { row ->
+                RenderStats.rowStart(
+                    when (row) {
+                        is TranscriptRow.Message -> (row.node::class.simpleName ?: "msg")
+                        is TranscriptRow.Activity -> "act"
+                        is TranscriptRow.Context -> "ctx"
+                    },
+                )
                 val node = (row as? TranscriptRow.Message)?.node
                 val streaming = node is AssistantMessageNode && node.streaming
                 // Placement animation is for rows that move. The streaming row grows in place many
                 // times a second, and animating that reads as jitter rather than motion.
-                Column(if (streaming) Modifier else Modifier.animateItem()) {
+                Column(if (streaming || !animateRows) Modifier else Modifier.animateItem()) {
                     when (row) {
                         is TranscriptRow.Message -> ChatNodeItem(node = row.node, context = context)
                         is TranscriptRow.Activity -> ActivityGroupRow(row.items, context)

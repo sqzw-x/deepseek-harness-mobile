@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">lien</string>
     <string name="diag_kind_service">service</string>
     <string name="diag_kind_tick">pulsation</string>
+    <string name="diag_kind_switch">bascule</string>
     <string name="trajectory_title">Trajectoire</string>
     <string name="trajectory_timeline">Chronologie</string>
     <string name="trajectory_ledger">Journal</string>

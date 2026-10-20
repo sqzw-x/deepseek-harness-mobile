@@ -564,6 +564,7 @@ private fun diagKindLabel(kind: BackgroundTrace.Kind): String = stringResource(
         BackgroundTrace.Kind.PHASE -> R.string.diag_kind_phase
         BackgroundTrace.Kind.SERVICE -> R.string.diag_kind_service
         BackgroundTrace.Kind.TICK -> R.string.diag_kind_tick
+        BackgroundTrace.Kind.SWITCH -> R.string.diag_kind_switch
     },
 )
 

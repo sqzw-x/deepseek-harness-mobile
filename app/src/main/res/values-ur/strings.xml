@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">لنک</string>
     <string name="diag_kind_service">سروس</string>
     <string name="diag_kind_tick">نبض</string>
+    <string name="diag_kind_switch">تبدیلی</string>
     <string name="trajectory_title">ٹریجیکٹری</string>
     <string name="trajectory_timeline">ٹائم لائن</string>
     <string name="trajectory_ledger">لیجر</string>

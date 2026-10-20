@@ -62,6 +62,7 @@ import com.labteto.dshmobile.ui.theme.DsType
 import com.labteto.dshmobile.ui.theme.DshTheme
 import com.labteto.dshmobile.core.markdown.SyntaxToken
 import com.labteto.dshmobile.core.markdown.highlightCode
+import com.labteto.dshmobile.diag.RenderStats
 import com.labteto.dshmobile.core.markdown.isHighlighted
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
@@ -109,7 +110,10 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     // The parser lives in :core (pure JVM) so it is unit-testable and survives a renderer rewrite.
     // List items arrive one per block, so runs of them are regrouped here: the renderer needs the
     // whole list at once to number an ordered list and to keep the markers in one column.
-    val blocks = remember(text) { groupListBlocks(parseMarkdown(text)) }
+    val blocks = remember(text) {
+        RenderStats.countChars(text.length)
+        RenderStats.markdown { groupListBlocks(parseMarkdown(text)) }
+    }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         blocks.forEach { render ->
             when (render) {
@@ -192,12 +196,16 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         color = colors.labelPrimary,
     )
     val result = remember(text, style, codeStyle, colors) {
-        buildInlineContent(text, codeStyle, colors)
+        RenderStats.inline { buildInlineContent(text, codeStyle, colors) }
     }
     val openFile = LocalFileOpener.current
     val openFolder = LocalFolderOpener.current
     val uriHandler = LocalUriHandler.current
-    val hasLinks = remember(result) { result.getStringAnnotations("url", 0, result.length).isNotEmpty() }
+    val hasLinks = remember(result) {
+        val count = result.getStringAnnotations("url", 0, result.length).size
+        RenderStats.countLinks(count)
+        count > 0
+    }
     // Each pill has a slot of its own, as wide as its label at the pill's (slightly smaller, mono)
     // size plus icon and padding, so the line is laid out around exactly that pill. A label wider
     // than most of the screen is capped and ellipsized rather than run past the edge.
@@ -208,6 +216,7 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
     val mathSizePx = with(density) { style.fontSize.toPx() }
     val mathFallbackStyle = remember(style) { style.copy(fontFamily = DsType.codeFont) }
     val inlineContent = remember(result, pillStyle, density, maxPillWidth, colors, mathSizePx) {
+        val slotStartedAt = android.os.SystemClock.uptimeMillis()
         val lineHeight = style.lineHeight.takeIf { it.isSp }?.let { it.value } ?: (style.fontSize.value * 1.5f)
         val pills = result.getStringAnnotations("path", 0, result.length).withIndex().associate { (index, ann) ->
             val label = result.text.substring(ann.start, ann.end)
@@ -234,6 +243,7 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
                 Placeholder(width, height, PlaceholderVerticalAlign.TextCenter),
             ) { InlineMath(tex = ann.item, sizePx = mathSizePx) }
         }
+        RenderStats.addSlots(pills.size + maths.size, android.os.SystemClock.uptimeMillis() - slotStartedAt)
         pills + maths
     }
     if (!hasLinks) {
@@ -244,11 +254,12 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         // The inline slots are still handed over: a formula is inline content whether or not the
         // line has a link in it, and a text without them draws each slot's source instead.
         val dismissToken = LocalSelectionDismiss.current.value
-        key(dismissToken) {
-            SelectionContainer(modifier = modifier) {
-                Text(result, style = style, inlineContent = inlineContent)
-            }
-        }
+        RenderStats.addSelection()
+        // A/B: the selection container is the only thing in this branch that is not plain text
+        // layout, so it is the thing being measured. Long-press selection is off until this is
+        // put back.
+        @Suppress("UNUSED_EXPRESSION") dismissToken
+        Text(result, style = style, inlineContent = inlineContent, modifier = modifier)
         return
     }
     // `Text` with its own hit test rather than `ClickableText`: the pills are inline content, which
@@ -617,7 +628,7 @@ private fun CodeBlock(lang: String?, code: String, modifier: Modifier = Modifier
         // Highlighting is resolved in the pure-JVM core lexer; this layer only maps its token
         // kinds to theme colors, so a merge that rewrites the renderer cannot break the tokenizer
         // and a theme change cannot break the lexer.
-        val highlighted = remember(code, lang) { codeAnnotated(code, lang) }
+        val highlighted = remember(code, lang) { RenderStats.code { codeAnnotated(code, lang) } }
         Text(
             highlighted,
             style = DsType.mdCode,

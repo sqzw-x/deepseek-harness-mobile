@@ -502,6 +502,7 @@ fun ChatScreen(
                             context = nodeContext,
                             listState = chatListState,
                             onLoadOlder = { scope.launch { store.loadOlder() } },
+                            onLaidOut = store::markSessionSwitchRendered,
                         )
                         ChatTab.Trajectory -> TrajectoryTab(
                             conversation = conversation,

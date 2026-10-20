@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
 class BackgroundTrace @Inject constructor() {
 
     /** What one entry is about. Labels are the UI's business, not this class's. */
-    enum class Kind { PROCESS, FOREGROUND, BACKGROUND, EVENT, SESSION, PHASE, SERVICE, TICK }
+    enum class Kind { PROCESS, FOREGROUND, BACKGROUND, EVENT, SESSION, PHASE, SERVICE, TICK, SWITCH }
 
     /**
      * One thing that happened, at [at] wall-clock milliseconds.
@@ -145,7 +145,7 @@ class BackgroundTrace @Inject constructor() {
                     lastEventAt = now
                 }
 
-                Kind.PROCESS, Kind.PHASE, Kind.SERVICE, Kind.TICK -> Unit
+                Kind.PROCESS, Kind.PHASE, Kind.SERVICE, Kind.TICK, Kind.SWITCH -> Unit
             }
             entries.addLast(Entry(now, uptime, kind, detail))
             while (entries.size > MAX_ENTRIES) entries.removeFirst()

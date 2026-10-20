@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">связь</string>
     <string name="diag_kind_service">служба</string>
     <string name="diag_kind_tick">пульс</string>
+    <string name="diag_kind_switch">переключение</string>
     <string name="trajectory_title">Траектория</string>
     <string name="trajectory_timeline">Хронология</string>
     <string name="trajectory_ledger">Журнал</string>

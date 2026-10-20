@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">ลิงก์</string>
     <string name="diag_kind_service">บริการ</string>
     <string name="diag_kind_tick">ชีพจร</string>
+    <string name="diag_kind_switch">สลับ</string>
     <string name="trajectory_title">เส้นทาง</string>
     <string name="trajectory_timeline">ไทม์ไลน์</string>
     <string name="trajectory_ledger">สมุดบันทึก</string>

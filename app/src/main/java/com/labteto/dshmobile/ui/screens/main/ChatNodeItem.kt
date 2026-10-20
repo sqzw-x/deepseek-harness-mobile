@@ -335,6 +335,10 @@ private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContex
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         node.blocks.forEachIndexed { index, block ->
+            // Stamped per block: the row-level number says one message is expensive, and only the
+            // block kind says whether that is the prose, the reasoning, or a tool preview parsed
+            // out of its arguments on every composition.
+            com.labteto.dshmobile.diag.RenderStats.rowStart("blk:" + block.kind)
             when (block.kind) {
                 "text" -> if (!block.text.isNullOrBlank()) MarkdownText(block.text.orEmpty())
                 "reasoning" -> if (!block.text.isNullOrBlank() || streaming) {

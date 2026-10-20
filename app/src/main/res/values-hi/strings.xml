@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">लिंक</string>
     <string name="diag_kind_service">सेवा</string>
     <string name="diag_kind_tick">टिक</string>
+    <string name="diag_kind_switch">स्विच</string>
     <string name="trajectory_title">ट्रैजेक्टरी</string>
     <string name="trajectory_timeline">टाइमलाइन</string>
     <string name="trajectory_ledger">लेजर</string>

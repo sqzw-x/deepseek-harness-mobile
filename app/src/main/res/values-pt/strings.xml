@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">enlace</string>
     <string name="diag_kind_service">serviço</string>
     <string name="diag_kind_tick">pulso</string>
+    <string name="diag_kind_switch">troca</string>
     <string name="trajectory_title">Trajetória</string>
     <string name="trajectory_timeline">Linha do tempo</string>
     <string name="trajectory_ledger">Histórico</string>

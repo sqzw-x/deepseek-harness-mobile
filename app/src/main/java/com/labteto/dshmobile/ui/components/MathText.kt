@@ -36,7 +36,12 @@ import ru.noties.jlatexmath.JLatexMathDrawable
  */
 
 /** Renders [tex] at [sizePx], or null when it is not valid TeX. */
-internal fun mathDrawable(tex: String, sizePx: Float, color: Color): Drawable? = runCatching {
+internal fun mathDrawable(tex: String, sizePx: Float, color: Color): Drawable? =
+    com.labteto.dshmobile.diag.RenderStats.math {
+        mathDrawableUnmeasured(tex, sizePx, color)
+    }
+
+private fun mathDrawableUnmeasured(tex: String, sizePx: Float, color: Color): Drawable? = runCatching {
     JLatexMathDrawable.builder(tex)
         .textSize(sizePx)
         .color(color.toArgb())

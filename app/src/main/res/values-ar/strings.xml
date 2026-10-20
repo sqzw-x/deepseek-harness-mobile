@@ -265,6 +265,7 @@
     <string name="diag_kind_phase">اتصال</string>
     <string name="diag_kind_service">خدمة</string>
     <string name="diag_kind_tick">نبض</string>
+    <string name="diag_kind_switch">تبديل</string>
     <string name="trajectory_title">المسار</string>
     <string name="trajectory_timeline">الخط الزمني</string>
     <string name="trajectory_ledger">الدفتر</string>
