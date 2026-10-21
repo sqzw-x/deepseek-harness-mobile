@@ -24,9 +24,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Turns completion/needs-action wire signals into local notifications.
@@ -41,7 +41,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * `session/event` frames on the all-session mux, which this observer read directly; 0.1.2 carries
  * session events only on a per-session `session/follow` stream, so [SessionStore] — which owns
  * those streams — reports them through [onSessionEvent] instead. What remains on the host event
- * stream is the two pending-request waterfalls and the session status notification.
+ * stream is the two pending-request waterfalls, the session status notification, and the two
+ * shared facts that let a notification be withdrawn from another client's doing.
  */
 @Singleton
 class NotificationObserver @Inject constructor(
@@ -55,6 +56,16 @@ class NotificationObserver @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val classifier = CompletionClassifier()
     private val seen = LinkedHashSet<String>()
+
+    /**
+     * Pending-request id → the session it belongs to, for the waterfalls this observer was told
+     * about.
+     *
+     * A [RemoteEventFrame.Cancel] names only the request, and the settlement may come from another
+     * client, so the id has to be resolved back to a session here. Unlike [seen], this map is
+     * touched on the frame collector only; [onSessionEvent] arrives from a session's own stream.
+     */
+    private val pendingRequests = LinkedHashMap<String, String>()
 
     @Volatile
     private var settings = AppSettings()
@@ -164,22 +175,63 @@ class NotificationObserver @Inject constructor(
 
     private fun handleEventFrame(frame: RemoteEventFrame) {
         when (frame) {
-            is RemoteEventFrame.Waterfall ->
-                classifier.classifyWaterfall(frame.event, frame.eventId, frame.agentId, frame.request)
-                    ?.let { maybeNotify(it) }
+            is RemoteEventFrame.Waterfall -> {
+                val event = classifier.classifyWaterfall(frame.event, frame.eventId, frame.agentId, frame.request)
+                if (event != null) {
+                    rememberPending(frame.eventId, event.sessionId)
+                    maybeNotify(event)
+                }
+            }
 
-            is RemoteEventFrame.Emit ->
-                classifier.classifyNotification(frame.event, frame.args)?.let { maybeNotify(it) }
+            is RemoteEventFrame.Emit -> when (frame.event) {
+                // A human prompt admitted in some session, from any client — this phone included.
+                // Whoever sent it is looking at that session, so a notification about it is spent.
+                EVENT_SESSION_ACTIVITY -> frame.args.sessionId()?.let(::handledElsewhere)
+                else -> classifier.classifyNotification(frame.event, frame.args)?.let { maybeNotify(it) }
+            }
 
-            // A withdrawn request needs no notification of its own; the prompt it belongs to is
-            // retired by whoever is showing it. Ready never reaches here, and an unknown frame
-            // kind is exactly what this observer should ignore.
-            is RemoteEventFrame.Cancel,
+            // Another client answered the request a notification was about, or the host's own
+            // caller cancelled it: either way the question is gone and its notification with it.
+            is RemoteEventFrame.Cancel -> takePending(frame.eventId)?.let(::handledElsewhere)
+
+            // Ready never carries a notification, and an unknown frame kind is exactly what this
+            // observer should ignore.
             is RemoteEventFrame.Ready,
             is RemoteEventFrame.Unknown,
             -> Unit
         }
     }
+
+    /**
+     * Withdraw a session's notifications because the user is demonstrably done with them
+     * somewhere else.
+     *
+     * The host has no read receipt — merely opening a session on the web produces nothing on the
+     * wire, and adding one would take a host change — so this fires on the two weaker facts that
+     * *are* shared between clients: a human prompt in that session, and a pending request settled
+     * by whoever answered first. A notification whose question was answered elsewhere is exactly
+     * as stale as one about a session being looked at, so both withdraw the session's lot.
+     */
+    private fun handledElsewhere(sessionId: String) {
+        notifications.cancelSession(sessionId)
+    }
+
+    /** Remember which session a pending request belongs to; a later [RemoteEventFrame.Cancel] names only the request. */
+    private fun rememberPending(eventId: String, sessionId: String) {
+        pendingRequests[eventId] = sessionId
+        // A cancel can be lost with the connection that owed it, so the map is bounded rather
+        // than trusted to empty itself.
+        while (pendingRequests.size > MAX_PENDING_REQUESTS) {
+            val oldest = pendingRequests.keys.firstOrNull() ?: break
+            pendingRequests.remove(oldest)
+        }
+    }
+
+    private fun takePending(eventId: String): String? = pendingRequests.remove(eventId)
+
+    /** The session an `api-session/activity` emit names; null when the frame carries no usable id. */
+    private fun List<JsonElement>.sessionId(): String? =
+        (firstOrNull() as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
 
     /**
      * One session event, forwarded by [SessionStore] from that session's follow stream.
@@ -281,5 +333,9 @@ class NotificationObserver @Inject constructor(
 
     private companion object {
         const val MAX_DEDUP_KEYS = 1024
+        const val MAX_PENDING_REQUESTS = 128
+
+        /** Harness 0.1.7+: a human prompt was admitted in that session, by some client. */
+        const val EVENT_SESSION_ACTIVITY = "api-session/activity"
     }
 }
