@@ -42,7 +42,7 @@ app/            Android UI
                   projections, approvals/questions, subagent catalog,
                   the live assistant attempt, file uploads
   notify/       NotificationObserver — classifier → channels, dedup,
-                  deep links
+                  deep links, and withdrawal once a session is on screen
   termux/       TermuxBridge (one command into Termux's RunCommandService,
                   result back through a PendingIntent), TermuxScripts (the
                   start/stop/install scripts, shipped in the app),
@@ -101,7 +101,9 @@ tools/capture/  Node recorder of real harness traffic → conformance fixtures
 4. `NotificationObserver` classifies host events into completion events and
    posts channel-notifications that deep-link into sessions. Turn and goal
    completions reach it from `SessionStore`, which owns the only stream
-   they travel on.
+   they travel on. A session's notifications are withdrawn as soon as the
+   app is in front with that session open, whether the user got there by
+   tapping one or by switching inside the app.
 
 ## Key invariants
 

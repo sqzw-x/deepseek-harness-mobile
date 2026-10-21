@@ -21,6 +21,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,9 +32,10 @@ import kotlinx.serialization.json.jsonPrimitive
  * Turns completion/needs-action wire signals into local notifications.
  *
  * `start()` launches one collector on the connection manager's host event stream; call it once
- * from [android.app.Application.onCreate] after the store is initialized. Each notification id is
- * stable per session (hash % 1000 + a per-channel offset) so re-notifying the same session
- * replaces the previous one instead of stacking.
+ * from [android.app.Application.onCreate] after the store is initialized. Notifications are tagged
+ * by session and slotted by channel, so re-notifying the same session replaces the previous one
+ * instead of stacking, and [DshNotifications.cancelSession] can withdraw a session's notifications
+ * without this class remembering what it posted.
  *
  * Turn and goal completions are not seen here any more. Through 0.1.1 they arrived as
  * `session/event` frames on the all-session mux, which this observer read directly; 0.1.2 carries
@@ -68,11 +72,22 @@ class NotificationObserver @Inject constructor(
     @Volatile
     private var appInForeground = false
 
+    /**
+     * Whether an activity is actually on screen, as opposed to merely started.
+     *
+     * Withdrawing a session's notifications keys off *this* and not [appInForeground]: an
+     * activity started to handle a notification tap has not yet been handed the intent that
+     * names the session to open — `onNewIntent` lands before `onResume` — so acting at start
+     * would withdraw the notification of the session being left instead of the destination's.
+     */
+    private val resumed = MutableStateFlow(false)
+
     fun start() {
         if (started) return
         started = true
         notifications.ensureChannels()
         trackAppForeground()
+        clearReadNotifications()
         scope.launch {
             hostsStore.settings.collect { settings = it }
         }
@@ -82,20 +97,29 @@ class NotificationObserver @Inject constructor(
     }
 
     /**
-     * Keep [appInForeground] in step with the activity stack. `start()` runs from
-     * `Application.onCreate`, before any activity exists, so counting start/stop pairs is
-     * exact from the first activity on.
+     * Keep [appInForeground] and [resumed] in step with the activity stack. `start()` runs from
+     * `Application.onCreate`, before any activity exists, so counting start/stop and
+     * resume/pause pairs is exact from the first activity on.
      */
     private fun trackAppForeground() {
         (context as? Application)?.registerActivityLifecycleCallbacks(
             object : Application.ActivityLifecycleCallbacks {
                 private var startedActivities = 0
+                private var resumedActivities = 0
 
                 override fun onActivityStarted(activity: Activity) {
                     if (++startedActivities == 1) {
                         appInForeground = true
                         trace.record(BackgroundTrace.Kind.FOREGROUND, "")
                     }
+                }
+
+                override fun onActivityResumed(activity: Activity) {
+                    if (++resumedActivities == 1) resumed.value = true
+                }
+
+                override fun onActivityPaused(activity: Activity) {
+                    if (--resumedActivities == 0) resumed.value = false
                 }
 
                 override fun onActivityStopped(activity: Activity) {
@@ -106,12 +130,36 @@ class NotificationObserver @Inject constructor(
                 }
 
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-                override fun onActivityResumed(activity: Activity) {}
-                override fun onActivityPaused(activity: Activity) {}
                 override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
                 override fun onActivityDestroyed(activity: Activity) {}
             },
         )
+    }
+
+    /**
+     * Withdraw a session's notifications as soon as the app is showing that session.
+     *
+     * A tap on a notification cancels that one notification itself; this covers the way in that
+     * the shade never learns about — switching sessions inside the app, and coming back to a
+     * session that stayed open the whole time the app was in the background. Both are "the user
+     * has seen this session", so neither should leave anything behind in the shade.
+     *
+     * All three inputs matter. A pending reveal is a tap in flight: at that instant the session on
+     * screen is still the one being left, so clearing it would drop a notification for a session
+     * nobody looked at; the destination is cleared once the store has opened it and dropped the
+     * reveal. Nothing is filtered to distinct sessions, because returning to the foreground with
+     * the same session open is exactly a case worth clearing.
+     */
+    private fun clearReadNotifications() {
+        scope.launch {
+            combine(
+                resumed,
+                store.currentSessionId,
+                store.pendingReveal,
+            ) { onScreen, sessionId, reveal ->
+                sessionId.takeIf { onScreen && reveal == null }
+            }.filterNotNull().collect { notifications.cancelSession(it) }
+        }
     }
 
     private fun handleEventFrame(frame: RemoteEventFrame) {
@@ -202,8 +250,7 @@ class NotificationObserver @Inject constructor(
         if (isDuplicate(event.dedupKey)) return
 
         val text = context.getString(R.string.notif_open)
-        val id = notificationId(event.sessionId, spec.channel)
-        notifications.postSession(spec.channel, id, spec.title, text, event.sessionId, spec.actionLabel)
+        notifications.postSession(spec.channel, spec.title, text, event.sessionId, spec.actionLabel)
     }
 
     private data class Spec(
@@ -214,16 +261,6 @@ class NotificationObserver @Inject constructor(
 
     private fun sessionTitle(sessionId: String): String? =
         store.sessions.value.firstOrNull { it.sessionId == sessionId }?.title
-
-    private fun notificationId(sessionId: String, channel: String): Int {
-        val offset = when (channel) {
-            DshNotifications.CHANNEL_ACTION -> CHANNEL_ACTION_OFFSET
-            DshNotifications.CHANNEL_CONNECTION -> CHANNEL_CONNECTION_OFFSET
-            else -> CHANNEL_COMPLETIONS_OFFSET
-        }
-        val base = ((sessionId.hashCode() % 1000) + 1000) % 1000
-        return base + offset
-    }
 
     private fun isDuplicate(key: String): Boolean {
         synchronized(seen) {
@@ -244,8 +281,5 @@ class NotificationObserver @Inject constructor(
 
     private companion object {
         const val MAX_DEDUP_KEYS = 1024
-        const val CHANNEL_COMPLETIONS_OFFSET = 1000
-        const val CHANNEL_ACTION_OFFSET = 2000
-        const val CHANNEL_CONNECTION_OFFSET = 3000
     }
 }
