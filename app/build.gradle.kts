@@ -103,21 +103,26 @@ android {
         }
     }
 
-    // Optional release signing: provide DSH_KEYSTORE / DSH_KEYSTORE_PASSWORD /
-    // DSH_KEY_ALIAS / DSH_KEY_PASSWORD (env vars, e.g. from GitHub secrets).
-    // Signing activates only when the keystore file actually exists, so a
-    // missing keystore silently falls back to an unsigned release APK.
+    // One key for both variants, named by DSH_KEYSTORE / DSH_KEYSTORE_PASSWORD /
+    // DSH_KEY_ALIAS / DSH_KEY_PASSWORD (env vars; the GitHub release workflow supplies the same
+    // key from its secrets). It is deliberately not a "debug" key: the debug channel is signed
+    // with it too, so the two build types share one signature identity and neither is a
+    // second-class install. Signing activates only when the keystore file exists, which leaves a
+    // release APK unsigned and a debug one on AGP's own default key when it is absent.
     signingConfigs {
         val keystore = System.getenv("DSH_KEYSTORE")
         if (!keystore.isNullOrBlank() && file(keystore).exists()) {
-            create("release") {
+            create("dsh") {
                 storeFile = file(keystore)
                 storePassword = System.getenv("DSH_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("DSH_KEY_ALIAS")
                 keyPassword = System.getenv("DSH_KEY_PASSWORD")
             }
             buildTypes.getByName("release") {
-                signingConfig = signingConfigs.getByName("release")
+                signingConfig = signingConfigs.getByName("dsh")
+            }
+            buildTypes.getByName("debug") {
+                signingConfig = signingConfigs.getByName("dsh")
             }
         }
     }

@@ -56,4 +56,4 @@
 4. Actions 跑 `Release APK`：单测、`assembleRelease`、lint、验签、生成 `SHA256SUMS.txt`，产出一个 **draft** Release
 5. 在网页上过一眼再点 Publish
 
-签名密钥存在仓库 secrets（`RELEASE_KEYSTORE` / `_PASSWORD` / `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD`），与本地构建用的是同一把，两条渠道的包可以互相覆盖。
+签名密钥存在仓库 secrets（`RELEASE_KEYSTORE` / `_PASSWORD` / `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD`），与本地构建用的是同一把，两条渠道的包可以互相覆盖。本地构建里 debug 与 release 也是这一把（`app/build.gradle.kts` 把同一个签名配置挂到两个变体上），只有包名不同。
