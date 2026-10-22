@@ -192,6 +192,18 @@ fun subagentEntriesFromCatalog(value: JsonElement?, running: (String) -> Boolean
     }
 }
 
+/**
+ * How one child session runs, read from its **own** `subagent` projection value.
+ *
+ * That projection is the child's descriptor — the same one the host cross-checks a subagent
+ * address against — so it is the only place a session list can learn the mode without opening the
+ * parent. A fork seed's replayed ancestor descriptor reads as `null` upstream, and so does any
+ * shape this client does not recognise: the caller then addresses the child with
+ * [SUBAGENT_MODE_UNKNOWN] rather than failing.
+ */
+fun subagentModeOf(value: JsonElement?): String? =
+    ((value as? JsonObject)?.get("mode") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
 /** Complete direct-child catalog plus the delivery-time parent availability hint. */
 @Serializable
 data class SubagentCatalog(

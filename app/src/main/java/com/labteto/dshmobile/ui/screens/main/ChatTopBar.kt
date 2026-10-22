@@ -38,6 +38,7 @@ import com.labteto.dshmobile.ui.components.DsButton
 import com.labteto.dshmobile.ui.components.DsButtonSize
 import com.labteto.dshmobile.ui.components.DsButtonVariant
 import com.labteto.dshmobile.ui.components.DsIconButton
+import com.labteto.dshmobile.ui.components.DsPill
 import com.labteto.dshmobile.ui.components.DsSegment
 import com.labteto.dshmobile.ui.components.DsSegmented
 import com.labteto.dshmobile.ui.components.FeatherIcons
@@ -72,6 +73,8 @@ internal fun ChatTopBar(
     models: SessionModelsValue?,
     agentPresetLabel: String?,
     subagentCount: Int,
+    /** Whether the open transcript is a subagent child rather than a session of the reader's own. */
+    subagent: Boolean,
     detailsOpen: Boolean,
     tab: ChatTab,
     onOpenDrawer: () -> Unit,
@@ -114,7 +117,7 @@ internal fun ChatTopBar(
             }
         }
 
-        val hasChips = agentPresetLabel != null || subagentCount > 0
+        val hasChips = subagent || agentPresetLabel != null || subagentCount > 0
         if (title.isNotBlank() || hasChips) {
             Row(
                 modifier = Modifier
@@ -131,6 +134,11 @@ internal fun ChatTopBar(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                // A child transcript opened from the tree looks exactly like a session otherwise,
+                // and sending into it addresses another agent's conversation.
+                if (subagent) {
+                    DsPill(text = stringResource(R.string.chatlist_subagents))
+                }
                 if (agentPresetLabel != null) {
                     MetaChip(
                         icon = Icons.Outlined.Dashboard,

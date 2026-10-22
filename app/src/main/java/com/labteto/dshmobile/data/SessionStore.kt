@@ -86,6 +86,8 @@ import com.labteto.dshmobile.core.wire.dto.SessionActivity
 import com.labteto.dshmobile.core.wire.dto.WorkspaceSessionActiveDetails
 import com.labteto.dshmobile.core.wire.dto.jobRowsOf
 import com.labteto.dshmobile.core.wire.dto.subagentEntriesFromCatalog
+import com.labteto.dshmobile.core.wire.dto.subagentModeOf
+import com.labteto.dshmobile.core.wire.dto.sessionAddressFor
 import com.labteto.dshmobile.core.wire.dto.SubagentPromptRequest
 import com.labteto.dshmobile.core.wire.dto.TokenUsageView
 import com.labteto.dshmobile.core.wire.dto.USER_QUESTIONS_REQUEST_EVENT
@@ -163,6 +165,14 @@ data class SessionRow(
     val updatedAt: Long,
     val pendingInteraction: String?, // "approval" | "plan-review" | "question" | null
     val formatStatus: String? = null,
+    /**
+     * How this child runs — `one-shot` or `continuable` — from its own `subagent` projection.
+     *
+     * Only a child has one. It decides whether the transcript takes new messages, and it is what
+     * the host cross-checks a subagent address against; null means no descriptor has been read
+     * yet, which addresses the child without claiming a mode.
+     */
+    val subagentMode: String? = null,
 )
 
 /** One renderable workspace row. */
@@ -295,6 +305,9 @@ private const val AGENT_PRESET_PROJECTION = "agentPreset"
 
 /** Projection key carrying a parent's direct subagents; `subagents/list` was removed in 0.1.7. */
 private const val SUBAGENT_CATALOG_PROJECTION = "subagentCatalog"
+
+/** Projection key carrying a child session's own descriptor: how it runs, and who spawned it. */
+private const val SUBAGENT_PROJECTION = "subagent"
 
 /**
  * What became of an archive request.
@@ -478,6 +491,16 @@ class SessionStore @Inject constructor(
     private val _subagentMode = MutableStateFlow<String?>(null)
     val subagentMode: StateFlow<String?> = _subagentMode.asStateFlow()
 
+    /**
+     * How the open session runs, when the open session is a subagent child: `one-shot`,
+     * `continuable`, or null for an ordinary session.
+     *
+     * The child's own `subagent` projection answers it — the same descriptor the host checks an
+     * address against — with the session row's copy as the fallback until that projection lands.
+     */
+    private val _currentSubagentMode = MutableStateFlow<String?>(null)
+    val currentSubagentMode: StateFlow<String?> = _currentSubagentMode.asStateFlow()
+
     private val _pendingApproval = MutableStateFlow<PendingApproval?>(null)
     val pendingApproval: StateFlow<PendingApproval?> = _pendingApproval.asStateFlow()
 
@@ -599,6 +622,15 @@ class SessionStore @Inject constructor(
      * gap — so a page requested before the snapshot arrives has nothing to send and is skipped.
      */
     private var followCursor: Int? = null
+
+    /**
+     * The address the open journal is read through, held with the cursor it belongs to.
+     *
+     * A subagent child is only readable through its parent, so paging back has to carry the same
+     * address the stream opened with. Re-derived from the list row on every open, and null before
+     * one; [loadOlder] falls back to the row it has.
+     */
+    private var followAddress: SessionAddress? = null
 
     /**
      * The reply being written in the open session, as the follow stream's assistant frames show
@@ -851,6 +883,19 @@ class SessionStore @Inject constructor(
     /** Full endpoint identity: sessions behind different proxy roots belong to different hosts. */
     private fun hostKey(): String? =
         connectionManager.state.value.host?.baseUrl
+
+    /**
+     * The durable address one session is read through, from the list row that describes it.
+     *
+     * A subagent child cannot be opened by id: the host refuses it because a cold read verifies
+     * durable ownership through the parent. The row says both things that decision needs — `origin`
+     * (a fork also records a parent, and a fork is its own session) and the child's own mode, which
+     * the host cross-checks and which may not have arrived yet.
+     */
+    private fun addressForLocked(sessionId: String): SessionAddress {
+        val row = sessionRows[sessionId]
+        return sessionAddressFor(sessionId, row?.origin, row?.parentSessionId, row?.subagentMode)
+    }
 
     // ------------------------------------------------------------------ host event frames
     /**
@@ -1285,6 +1330,8 @@ class SessionStore @Inject constructor(
                 cwd = item.cwd,
                 agentPreset = preset,
                 formatStatus = item.formatStatus,
+                subagentMode = subagentModeOf(item.projections?.values?.get(SUBAGENT_PROJECTION))
+                    ?: existing.subagentMode,
             ) ?: SessionRow(
                 sessionId = item.sessionId,
                 title = title,
@@ -1297,6 +1344,7 @@ class SessionStore @Inject constructor(
                 updatedAt = item.updatedAt,
                 pendingInteraction = null,
                 formatStatus = item.formatStatus,
+                subagentMode = subagentModeOf(item.projections?.values?.get(SUBAGENT_PROJECTION)),
             )
             if (existing == null) {
                 // New sessions appear at the front (most recent first).
@@ -1473,6 +1521,23 @@ class SessionStore @Inject constructor(
         questionSessions.restoreSettled(merged)
         _currentConversation.value = merged
         publishCatalogSubagentsLocked()
+        publishCurrentSubagentModeLocked()
+    }
+
+    /**
+     * Say whether the open session is a child, and how it runs, from its own descriptor.
+     *
+     * The projection is authoritative once it has landed; the list row stands in until then, and
+     * for a child whose descriptor this build cannot read. An ordinary session clears it.
+     */
+    private fun publishCurrentSubagentModeLocked() {
+        val row = currentId?.let { sessionRows[it] }
+        val mode = if (row?.origin == "subagent") {
+            subagentModeOf(currentProjections[SUBAGENT_PROJECTION]?.value) ?: row.subagentMode
+        } else {
+            null
+        }
+        if (_currentSubagentMode.value != mode) _currentSubagentMode.value = mode
     }
 
     /**
@@ -1496,6 +1561,8 @@ class SessionStore @Inject constructor(
             ))
         }
         _sessions.value = rows
+        // The open child's mode rides the list too: a refresh can be the first thing to learn it.
+        publishCurrentSubagentModeLocked()
     }
 
     private fun emitWorkspacesLocked() {
@@ -1556,6 +1623,7 @@ class SessionStore @Inject constructor(
                             updatedAt = item.updatedAt,
                             pendingInteraction = null,
                             formatStatus = item.formatStatus,
+                            subagentMode = subagentModeOf(item.projections?.values?.get(SUBAGENT_PROJECTION)),
                         )
                     }
                     emitSessionsLocked()
@@ -1623,7 +1691,8 @@ class SessionStore @Inject constructor(
         val api = apiOrNull() ?: return@withContext
         _loadOlderFailed.value = false
         var wake: String? = null
-        synchronized(lock) {
+        val address: SessionAddress = synchronized(lock) {
+            val resolved = addressForLocked(sessionId)
             val left = currentId
             val same = left == sessionId
             // What is on screen is worth keeping: switching away and back is the common case, and
@@ -1645,6 +1714,10 @@ class SessionStore @Inject constructor(
             currentQueue = emptyList()
             liveAssistant.clear()
             followCursor = null
+            followAddress = resolved
+            // Before the first snapshot lands, from the row alone: the composer's read-only state
+            // must not wait for the stream, and the stream then corrects it from the descriptor.
+            publishCurrentSubagentModeLocked()
             if (seeded.isNotEmpty()) {
                 currentEvents.addAll(seeded)
                 currentHasMore = true
@@ -1671,10 +1744,11 @@ class SessionStore @Inject constructor(
             switchCached = seeded.isNotEmpty()
             switchPublishedAt = android.os.SystemClock.uptimeMillis()
             com.labteto.dshmobile.diag.RenderStats.reset()
+            resolved
         }
         // A session that is still running keeps producing after the reader leaves it.
         wake?.let(::startWatcher)
-        startFollow(sessionId)
+        startFollow(sessionId, address)
         startJobs(sessionId)
         // Everything past the follow stream furnishes the chrome around the transcript — the skill
         // and model pickers, the subagent list, the command catalog — and none of it is needed to
@@ -1694,13 +1768,13 @@ class SessionStore @Inject constructor(
     }
 
     /** Named arguments of one `session/follow` opening. */
-    private fun followArgs(sessionId: String, maxMessages: Int?, assistantStream: Boolean) = buildJsonObject {
+    private fun followArgs(address: SessionAddress, maxMessages: Int?, assistantStream: Boolean) = buildJsonObject {
         put(
             "request",
             encodeToJsonElement(
                 SessionFollowRequest.serializer(),
                 SessionFollowRequest(
-                    address = SessionAddress.Session(sessionId = sessionId),
+                    address = address,
                     maxMessages = maxMessages,
                     assistantStream = assistantStream,
                 ),
@@ -1725,16 +1799,20 @@ class SessionStore @Inject constructor(
      * Following does not resume a stopped agent: the host publishes a cold session's prepared
      * snapshot immediately and promotes it in the background, so opening a transcript is an
      * observation rather than an execution.
+     *
+     * [address] is not the session id by another name: a subagent child is readable only through
+     * its durable parent, and the host refuses a plain session address for one.
      */
-    private fun startFollow(sessionId: String) {
+    private fun startFollow(sessionId: String, address: SessionAddress) {
         followJob?.cancel()
         followCursor = null
+        followAddress = address
         val mux = connectionManager.generation?.mux
         if (mux == null) {
             log("cannot follow $sessionId: no connection generation")
             return
         }
-        val args = followArgs(sessionId, HISTORY_PAGE_SIZE, assistantStream = true)
+        val args = followArgs(address, HISTORY_PAGE_SIZE, assistantStream = true)
         followJob = scope.launch {
             runCatching {
                 mux.openStream("session/follow", args).collect { item ->
@@ -1887,7 +1965,9 @@ class SessionStore @Inject constructor(
         synchronized(lock) {
             if (sessionCaches[sessionId]?.job != null) return
             val cache = cacheOfLocked(sessionId)
-            cache.job = scope.launch { watch(cache) }
+            // A running child is watched through the same parent-addressed route the open view uses.
+            val address = addressForLocked(sessionId)
+            cache.job = scope.launch { watch(cache, address) }
         }
     }
 
@@ -1916,12 +1996,12 @@ class SessionStore @Inject constructor(
      * by then the stream that matters has been reopened with the assistant frames this one does
      * not ask for.
      */
-    private suspend fun watch(cache: SessionCache) {
+    private suspend fun watch(cache: SessionCache, address: SessionAddress) {
         try {
             val mux = connectionManager.generation?.mux ?: return
             mux.openStream(
                 "session/follow",
-                followArgs(cache.sessionId, HISTORY_PAGE_SIZE, assistantStream = false),
+                followArgs(address, HISTORY_PAGE_SIZE, assistantStream = false),
             ).collect { item ->
                 when (val frame = decodeOrNull(SessionFollowFrameSerializer, item)) {
                     is SessionFollowFrame.Snapshot -> synchronized(lock) {
@@ -1982,8 +2062,8 @@ class SessionStore @Inject constructor(
         val api = apiOrNull() ?: return@withContext
         if (!_loadingOlder.compareAndSet(expect = false, update = true)) return@withContext
         try {
-            val (oldestSeq, cursor) = synchronized(lock) {
-                currentEvents.firstOrNull()?.seq to followCursor
+            val (oldestSeq, cursor, address) = synchronized(lock) {
+                Triple(currentEvents.firstOrNull()?.seq, followCursor, followAddress ?: addressForLocked(sid))
             }
             // A page is pinned to the follow generation's log cut, and there is no page without
             // one. Before the opening snapshot lands there is nothing to pin to, so this waits
@@ -1993,7 +2073,7 @@ class SessionStore @Inject constructor(
                 return@withContext
             }
             val request = SessionPageRequest(
-                address = SessionAddress.Session(sessionId = sid),
+                address = address,
                 throughSeq = cursor,
                 beforeSeq = oldestSeq?.toInt(),
                 maxMessages = HISTORY_PAGE_SIZE,
@@ -2184,11 +2264,51 @@ class SessionStore @Inject constructor(
         ).also { onProgress(bytes.size.toLong()) }
     }
 
+    /**
+     * Send one human message, to an ordinary session or to the child that is on screen.
+     *
+     * A subagent child is not prompted through `session/prompt`: the host owns that conversation
+     * through subagent routing and refuses the session route. The delivery goes out through
+     * `subagents/prompt` with the durable parent it names, which is also what the desktop client
+     * does when a child is open as a session.
+     */
     private suspend fun promptContent(mode: String, content: List<PromptContentPart>, targetSessionId: String?, targetHost: String?): PromptOutcome {
         val sid = targetSessionId ?: return PromptOutcome.Failed("no open session")
         val api = apiForHost(targetHost) ?: return PromptOutcome.Failed("not connected")
         val safeMode = if (mode == "steer") "steer" else "queue"
         val zone = TimeZone.getDefault().id
+        val address = synchronized(lock) { addressForLocked(sid) }
+        if (address is SessionAddress.Subagent) {
+            // The child's delivery schema carries text and images only; a staged file receipt has
+            // nowhere to go, so it is refused here rather than as a codec failure.
+            if (content.any { it is PromptContentPart.File }) {
+                return PromptOutcome.Rejected(ImageRejection.SUBAGENT_FILE_UNSUPPORTED, "SUBAGENT_FILE_UNSUPPORTED")
+            }
+            val request = SubagentPromptRequest(
+                requestId = newPromptRequestId(),
+                delivery = safeMode,
+                parentSessionId = address.parentSessionId,
+                childSessionId = address.childSessionId,
+                content = content,
+                clientTimeZone = zone,
+            )
+            return when (val r = api.subagentPrompt(request)) {
+                is RpcResult.Ok -> PromptOutcome.Ok
+                // An image bound is refused by the shared attachment store, which answers with its
+                // own `attachment-invalid` whichever route admitted the message.
+                is RpcResult.Err -> if (r.error.code == ATTACHMENT_INVALID || r.error.code == "subagent/attachment-invalid") {
+                    promptRejection(r.error)
+                } else {
+                    // A child refusal (one that is not continuable, a parent that is gone, delivery
+                    // at capacity) is about this message, not the connection, so it does not
+                    // raise the persistent banner.
+                    if (!r.error.code.startsWith("subagent/") && r.error.code != "session/agent-busy") {
+                        setConnectionError(r.error.message)
+                    }
+                    PromptOutcome.Failed(r.error.message)
+                }
+            }
+        }
         val request = SessionPromptRequest(
             requestId = newPromptRequestId(),
             sessionId = sid,
@@ -2199,11 +2319,7 @@ class SessionStore @Inject constructor(
         return when (val r = api.sessionPrompt(request)) {
             is RpcResult.Ok -> PromptOutcome.Ok
             is RpcResult.Err -> if (r.error.code == ATTACHMENT_INVALID) {
-                // The host declined the attachments, not the connection. Report it where they are
-                // so the composer can keep them and say which bound they crossed.
-                val reason = (r.error.details as? JsonObject)
-                    ?.get("reason")?.jsonPrimitive?.contentOrNull
-                PromptOutcome.Rejected(imageRejectionOf(reason.orEmpty()), reason)
+                promptRejection(r.error)
             } else {
                 setConnectionError(r.error.message)
                 PromptOutcome.Failed(r.error.message)
@@ -2211,9 +2327,30 @@ class SessionStore @Inject constructor(
         }
     }
 
+    /**
+     * An attachment the host declined, not a connection fault.
+     *
+     * Reported where the attachments are, so the composer can keep them and say which bound they
+     * crossed instead of blaming the harness.
+     */
+    private fun promptRejection(error: RpcError): PromptOutcome.Rejected {
+        val reason = (error.details as? JsonObject)?.get("reason")?.jsonPrimitive?.contentOrNull
+        return PromptOutcome.Rejected(imageRejectionOf(reason.orEmpty()), reason)
+    }
+
     suspend fun cancelTurn() {
         val sid = currentSessionId.value ?: return
         val api = apiOrNull() ?: return
+        val address = synchronized(lock) { addressForLocked(sid) }
+        if (address is SessionAddress.Subagent) {
+            // Stopping a child is the parent's call: `interruptByParent` authorizes the address
+            // against the live activation, which is why it works while the parent agent is cold.
+            when (val r = api.subagentInterrupt(childSessionId = address.childSessionId, parentSessionId = address.parentSessionId)) {
+                is RpcResult.Ok -> Unit
+                is RpcResult.Err -> setConnectionError(r.error.message)
+            }
+            return
+        }
         when (val r = api.sessionCancel(SessionCancelRequest(sid))) {
             is RpcResult.Ok -> Unit
             is RpcResult.Err -> setConnectionError(r.error.message)

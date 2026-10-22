@@ -66,10 +66,46 @@ sealed class SessionAddress {
         @SerialName("kind") override val kind: String = "subagent",
         @SerialName("parentSessionId") val parentSessionId: String,
         @SerialName("childSessionId") val childSessionId: String,
-        /** 'one-shot' | 'continuable'. */
+        /** 'one-shot' | 'continuable', or [SUBAGENT_MODE_UNKNOWN] to skip the host's cross-check. */
         @SerialName("mode") val mode: String,
     ) : SessionAddress()
 }
+
+/**
+ * The `mode` that asks the host to skip its descriptor cross-check on a subagent address.
+ *
+ * The host compares the address's `mode` against the child's own `subagent` descriptor and refuses
+ * a mismatch; this value is exempt, which is what lets a client open a child it has only just
+ * learned about, before any projection has told it how the child runs.
+ */
+const val SUBAGENT_MODE_UNKNOWN: String = "unknown"
+
+/**
+ * The durable address one session's journal must be read through.
+ *
+ * A subagent child is not readable as a session: the host refuses a plain session address for one,
+ * because a cold read verifies durable ownership through the parent rather than trusting the child
+ * id alone. `origin` is the discriminator, not `parentSessionId` — an ordinary fork records a
+ * parent too, and a fork is a session in its own right.
+ *
+ * @param subagentMode the child's own descriptor mode when known; otherwise the address carries
+ *   [SUBAGENT_MODE_UNKNOWN], which the host accepts without checking.
+ */
+fun sessionAddressFor(
+    sessionId: String,
+    origin: String?,
+    parentSessionId: String?,
+    subagentMode: String?,
+): SessionAddress =
+    if (origin == "subagent" && parentSessionId != null) {
+        SessionAddress.Subagent(
+            parentSessionId = parentSessionId,
+            childSessionId = sessionId,
+            mode = subagentMode ?: SUBAGENT_MODE_UNKNOWN,
+        )
+    } else {
+        SessionAddress.Session(sessionId = sessionId)
+    }
 
 /** Custom `kind`-dispatching serializer for [SessionAddress]. */
 object SessionAddressSerializer : KSerializer<SessionAddress> {

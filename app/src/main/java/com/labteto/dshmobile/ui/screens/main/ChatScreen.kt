@@ -70,7 +70,9 @@ import com.labteto.dshmobile.ui.screens.main.commands.SlashMenu
 import com.labteto.dshmobile.ui.screens.main.commands.SlashRow
 import com.labteto.dshmobile.ui.screens.main.commands.activeSlash
 import com.labteto.dshmobile.ui.theme.DsAnimations
+import com.labteto.dshmobile.ui.theme.DsSpacing
 import com.labteto.dshmobile.ui.theme.DsTheme
+import com.labteto.dshmobile.ui.theme.DsType
 import androidx.compose.ui.res.stringResource
 import com.labteto.dshmobile.R
 import java.util.UUID
@@ -110,6 +112,7 @@ fun ChatScreen(
     val subagents by store.subagents.collectAsStateWithLifecycle()
     val subagentConversation by store.subagentConversation.collectAsStateWithLifecycle()
     val subagentMode by store.subagentMode.collectAsStateWithLifecycle()
+    val currentSubagentMode by store.currentSubagentMode.collectAsStateWithLifecycle()
     val connectionError by store.connectionError.collectAsStateWithLifecycle()
     val loadingOlder by store.loadingOlder.collectAsStateWithLifecycle()
     val loadOlderFailed by store.loadOlderFailed.collectAsStateWithLifecycle()
@@ -125,6 +128,11 @@ fun ChatScreen(
     val imageLimits by store.imageLimits.collectAsStateWithLifecycle()
 
     val currentSession = sessions.firstOrNull { it.sessionId == currentSessionId }
+    // A child transcript is a record of another agent's work, and only a continuable child takes
+    // messages at all; the row is the first answer and the child's own descriptor corrects it.
+    val isSubagent = currentSession?.origin == "subagent"
+    val subagentReadOnly = isSubagent &&
+        (currentSubagentMode ?: currentSession?.subagentMode) == "one-shot"
     val workingDirectory = com.labteto.dshmobile.core.session.effectiveWorkingDirectory(conversation?.projections, currentSession?.cwd)
     val title = currentSession?.title
         ?: currentSession?.cwd?.let { basename(it) }
@@ -326,6 +334,14 @@ fun ChatScreen(
 
     fun send(text: String) {
         if (composer.preparing || composer.submitting) { draft = text; return }
+        // The composer is disabled for a one-shot child, but a decoration or a restored draft can
+        // still reach this: nothing addressed to a finished child is ever accepted, so say so and
+        // keep the text rather than letting the host refuse it after the fact.
+        if (subagentReadOnly) {
+            draft = text
+            toast.second(context.getString(R.string.subagents_readonly))
+            return
+        }
         if (attachments.isEmpty() && dispatchDecorated(text)) return
         val delivery = mode
         val targetId = composer.key.sessionId
@@ -443,6 +459,7 @@ fun ChatScreen(
                     ?.takeIf { agentPresets?.modeSelectionEnabled != false && currentSession.blank }
                     ?.let { agentPresetLabel(it, agentPresets) },
                 subagentCount = subagents.size,
+                subagent = isSubagent,
                 detailsOpen = detailsOpen,
                 tab = tab,
                 onOpenDrawer = onOpenDrawer,
@@ -641,6 +658,17 @@ fun ChatScreen(
                     )
                 }
 
+                // A one-shot child is finished by definition: the harness accepts no message for
+                // it, so the composer says why instead of offering a send that would be refused.
+                if (subagentReadOnly) {
+                    Text(
+                        stringResource(R.string.subagents_readonly),
+                        style = DsType.caption11,
+                        color = colors.labelTertiary,
+                        modifier = Modifier.padding(horizontal = DsSpacing.medium, vertical = DsSpacing.tiny),
+                    )
+                }
+
                 Composer(
                     modifier = Modifier.heightIn(max = composerMaxHeight),
                     references = composer.references,
@@ -676,7 +704,7 @@ fun ChatScreen(
                     contextBreakdown = contextBreakdown,
                     contextPressure = contextPressure,
                     running = conversation?.running == true,
-                    enabled = currentSessionId != null && !composer.submitting,
+                    enabled = currentSessionId != null && !composer.submitting && !subagentReadOnly,
                     preparing = composer.preparing,
                     onOpenSheet = { sheet = ChatSheet.Commands },
                     // A lambda, not `::send`. The composer holds this through rememberUpdatedState,

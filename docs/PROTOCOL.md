@@ -370,6 +370,20 @@ no way to resume mid-stream. Following does not resume a stopped agent — the h
 publishes a cold session's prepared snapshot immediately and promotes it in the
 background — so opening a transcript is an observation, not an execution.
 
+`address` is `{kind:"session", sessionId}` or
+`{kind:"subagent", parentSessionId, childSessionId, mode}`. A child session is
+readable **only** through the second form: a plain session address for one is
+refused with `session/agent-busy` ("subagent Sessions require their durable
+parent address"), because a cold read verifies durable ownership through the
+parent rather than trusting the child id alone. The host also cross-checks the
+address's `mode` against the child's own `subagent` projection descriptor — the
+projection every session row carries, so a list can learn the mode without
+opening the parent. The literal `"unknown"` is exempt from that check, which is
+how a client opens a child it has only just learned about. Everything written
+into a child goes through `subagents/prompt` (text and images; files are
+refused) and `subagents/interruptByParent` stops it — the `session/*` write
+routes belong to the session the reader owns.
+
 **`session/page`** is the unary half, and it **requires** `throughSeq`, which
 comes from the matching follow generation's opening `cursor`. That pins the page
 to the same log cut the live tail started from, which is what lets the two be
