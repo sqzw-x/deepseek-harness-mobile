@@ -1,6 +1,7 @@
 package com.labteto.dshmobile.ui.screens.main
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,9 +31,10 @@ import com.labteto.dshmobile.R
 import com.labteto.dshmobile.core.wire.dto.ModelCatalogModel
 import com.labteto.dshmobile.core.wire.dto.SessionModelsValue
 import com.labteto.dshmobile.data.SessionStore
-import com.labteto.dshmobile.ui.components.DsBottomSheet
+import com.labteto.dshmobile.ui.components.DsPickerSheet
 import com.labteto.dshmobile.ui.components.DsSegment
 import com.labteto.dshmobile.ui.components.DsSegmented
+import com.labteto.dshmobile.ui.components.DsSheetBody
 import com.labteto.dshmobile.ui.theme.DsShapes
 import com.labteto.dshmobile.ui.theme.DsSpacing
 import com.labteto.dshmobile.ui.theme.DsTheme
@@ -55,12 +57,31 @@ internal fun ModelsSheet(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    DsPickerSheet(title = stringResource(R.string.models_title), onDismiss = onDismiss) {
+        ModelsSheetBody(models) { provider, model, effort ->
+            scope.launch { store.selectModel(provider, model, effort) }
+        }
+    }
+}
+
+/**
+ * The picker's body, split from the store so gesture behavior can be pinned without a harness.
+ *
+ * The whole body is swiped, including the search field and the rows; [DsSheetBody] keeps those
+ * gestures inside the list and raises the header as the only drag-to-dismiss surface.
+ */
+@Composable
+internal fun ModelsSheetBody(
+    models: SessionModelsValue?,
+    scrollState: ScrollState = rememberScrollState(),
+    onSelect: (provider: String, model: String, effort: String?) -> Unit,
+) {
     val colors = DsTheme.colors
     var query by remember { mutableStateOf("") }
-    DsBottomSheet(title = stringResource(R.string.models_title), onDismiss = onDismiss) {
+    DsSheetBody(scrollState = scrollState) {
         if (models == null) {
             Text(stringResource(R.string.common_loading), style = DsType.std14, color = colors.labelTertiary)
-            return@DsBottomSheet
+            return@DsSheetBody
         }
         if (models.groups.sumOf { it.models.size } > 4) ChatSearchField(query, { query = it })
         if (models.groups.none { group -> group.models.any { modelSearchMatches(query, "${group.id} ${group.name} ${it.id} ${it.name}") } }) {
@@ -77,7 +98,7 @@ internal fun ModelsSheet(
         Column(
             modifier = Modifier
                 .heightIn(max = 420.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(DsSpacing.tiny),
         ) {
             models.groups.forEach { group ->
@@ -101,10 +122,8 @@ internal fun ModelsSheet(
                         model = model,
                         selected = isCurrent,
                         selectedEffort = current.reasoningEffort.takeIf { isCurrent },
-                        onSelect = { scope.launch { store.selectModel(group.id, model.id) } },
-                        onSelectEffort = { effort ->
-                            scope.launch { store.selectModel(group.id, model.id, effort) }
-                        },
+                        onSelect = { onSelect(group.id, model.id, null) },
+                        onSelectEffort = { effort -> onSelect(group.id, model.id, effort) },
                     )
                 }
             }
