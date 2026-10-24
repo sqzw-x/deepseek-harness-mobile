@@ -150,7 +150,6 @@
     <string name="chat_composer_attach">Attach image</string>
     <string name="chat_composer_remove_image">Remove image</string>
     <string name="chat_empty_title">Start working with your harness</string>
-    <string name="chat_jump_to_latest">Scroll to latest</string>
     <string name="chat_empty_hint">Send a message to begin a new turn.</string>
     <string name="chat_load_older">Load older messages</string>
     <string name="chat_loading_older">Loading earlier messages…</string>
@@ -603,6 +602,7 @@
     <string name="chat_activity_thoughts">Thoughts: %1$d</string>
     <string name="chat_activity_running_tool">Running a tool</string>
     <string name="chat_thought_process">Thought process</string>
+    <string name="chat_process_title">Process</string>
     <!-- ==== This phone (Termux) mode, harness control and install via Termux ==== -->
     <string name="connect_mode_loopback">This phone</string>
     <string name="connect_mode_loopback_hint">Talk to a harness running on this phone — in Termux, or forwarded here with adb reverse. Nothing leaves the device, and the harness treats the app as local. It still signs this phone in once.</string>
@@ -638,4 +638,35 @@
     <string name="update_copy_command">Copy install command</string>
     <string name="update_install_started">Downloading in Termux. The installer opens when it finishes.</string>
     <string name="update_install_failed">Termux could not install the update (%1$s).</string>
+    <string name="chat_history_title">History</string>
+    <string name="chat_history_empty">No prompts yet.</string>
+    <string name="chat_history_no_match">No messages match that.</string>
+    <string name="chat_history_image">Image</string>
+    <string name="hold_message_actions">Message actions</string>
+    <string name="hold_tool_actions">Tool call actions</string>
+    <string name="hold_file_actions">File actions</string>
+    <string name="hold_session_actions">Session actions</string>
+    <string name="hold_workspace_actions">Folder actions</string>
+    <string name="hold_select_text">Select text</string>
+    <string name="hold_copy_all">Copy all</string>
+    <string name="hold_edit_as_new">Edit as new message</string>
+    <string name="hold_edit_as_new_detail">Puts it in the composer. The original stays.</string>
+    <string name="hold_rewind_here">Rewind to this message</string>
+    <string name="hold_rewind_here_detail">Withdraws it and everything after it, then puts it back in the composer</string>
+    <string name="hold_copy_command">Copy command</string>
+    <string name="hold_copy_path">Copy path</string>
+    <string name="hold_copy_query">Copy search</string>
+    <string name="hold_copy_output">Copy output</string>
+    <string name="hold_copy_arguments">Copy arguments</string>
+    <string name="hold_open_file">Open file</string>
+    <string name="hold_mention">Mention in message</string>
+    <string name="hold_send_label">Choose how to send</string>
+    <string name="hold_send_steer">Steer now</string>
+    <string name="hold_send_queue">Queue for after this turn</string>
+    <string name="hold_send_tip">Tip: hold Send to choose for a single message.</string>
+    <string name="hold_replace_draft_title">Replace your draft?</string>
+    <string name="hold_replace_draft_body">The composer already has text in it. Editing this message replaces it.</string>
+    <string name="hold_replace_draft_confirm">Replace</string>
+    <string name="chatlist_show_all">Show all %1$d</string>
+    <string name="chatlist_show_less">Show less</string>
 </resources>

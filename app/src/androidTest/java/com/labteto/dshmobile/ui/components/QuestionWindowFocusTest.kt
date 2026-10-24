@@ -79,8 +79,10 @@ class QuestionWindowFocusTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         compose.onNodeWithContentDescription(context.getString(R.string.ux_b_view_questions)).performClick()
         compose.onNode(hasSetTextAction()).performScrollTo().requestFocus()
-        compose.waitUntil { paused }
+        // The dialog is a second window: on the software-rendered emulator its focus changes land
+        // well past the 1s default when the whole suite runs in one process.
+        compose.waitUntil(5_000) { paused }
         compose.onNodeWithContentDescription(context.getString(R.string.common_close)).performClick()
-        compose.waitUntil { !paused }
+        compose.waitUntil(5_000) { !paused }
     }
 }

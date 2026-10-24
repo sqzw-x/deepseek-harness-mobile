@@ -32,7 +32,7 @@ val dshDescribe: String? = runCatching {
  */
 val dshUpstreamVersion: String = System.getenv("DSH_VERSION_NAME")?.takeIf { it.isNotBlank() }
     ?: dshDescribe?.removePrefix("v")?.takeIf { name -> name.firstOrNull()?.isDigit() == true }
-    ?: "0.16.0"
+    ?: "0.18.0"
 
 /** `0.16.0-32-gabc123` and `0.16.0` both name release 0.16.0. */
 val dshUpstreamBase: String = dshUpstreamVersion

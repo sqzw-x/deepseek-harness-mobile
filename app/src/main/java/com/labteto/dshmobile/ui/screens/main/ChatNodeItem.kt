@@ -18,7 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.Description
@@ -34,11 +38,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.expandVertically
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.labteto.dshmobile.R
@@ -66,8 +71,12 @@ import com.labteto.dshmobile.ui.components.DisclosureRow
 import com.labteto.dshmobile.ui.components.DisclosureState
 import com.labteto.dshmobile.ui.components.DsPill
 import com.labteto.dshmobile.ui.components.FeatherIcons
+import com.labteto.dshmobile.ui.components.HoldAction
+import com.labteto.dshmobile.ui.components.HoldMenu
 import com.labteto.dshmobile.ui.components.LocalSelectionDismiss
 import com.labteto.dshmobile.ui.components.MarkdownText
+import com.labteto.dshmobile.ui.components.SelectTextDialog
+import com.labteto.dshmobile.ui.components.clickableWithHold
 import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.StateDotState
 import com.labteto.dshmobile.ui.components.ThinkingPanel
@@ -95,6 +104,15 @@ internal data class ChatNodeContext(
     val onBranchFrom: (Long) -> Unit,
     val onFeedback: (Long, Boolean) -> Unit,
     val eventTimes: Map<Long, Long> = emptyMap(),
+    /** Puts a sent prompt's text back in the composer; null where there is no composer. */
+    val onEditPrompt: ((String) -> Unit)? = null,
+    /**
+     * Rewinds the session to a user message, by sequence and preview. Null unless the rewind
+     * plugin is installed and the session is idle.
+     */
+    val onRewindTo: ((Long, String) -> Unit)? = null,
+    /** Adds an `@` mention of a workspace path to the composer; null where there is no composer. */
+    val onMention: ((path: String, folder: Boolean) -> Unit)? = null,
 )
 
 /**
@@ -137,7 +155,7 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
                 when {
                     node.isRewindMarker -> RewindMarkerRow()
                     node.isInjectedContext -> InjectedContextRow(node, text)
-                    else -> UserBubble(text)
+                    else -> UserMessageBubble(node, text, context)
                 }
             }
         }
@@ -220,8 +238,16 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
         // Unknown event types stay visible — that is the compatibility contract — but the
         // structural ones are not "unknown", they are bookkeeping, and printing `step/start` /
         // `step/end` between every tool call buried the actual work in noise.
-        is OtherNode -> if (!isStructuralEventType(node.type)) {
-            if (node.type == "deliverables/presented") {
+        is OtherNode -> {
+            // The turn's settled file changes, listed the way the web client lists them. A payload
+            // this build cannot read falls through to the raw disclosure like any other event.
+            val changesTurn = if (node.type == "workspace/changes") changesTurn(node.data) else null
+            when {
+                changesTurn != null ->
+                    ChangedFilesRow(context.nodes, changesTurn, context.cwd, context.onMention)
+                // Bookkeeping still draws nothing here; the card above is the one exception.
+                isStructuralEventType(node.type) -> Unit
+                node.type == "deliverables/presented" -> {
                 val open = com.labteto.dshmobile.ui.components.LocalFileOpener.current
                 ((node.data as? JsonObject)?.get("files") as? JsonArray)?.forEach { file ->
                     val obj = file as? JsonObject
@@ -234,11 +260,13 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
                         }
                     }
                 }
-            } else JsonDisclosure(when (node.type) {
-                "system/message", "request/context" -> stringResource(R.string.system_prompt)
-                "image/offload" -> stringResource(R.string.image_offload)
-                else -> node.type
-            }, node.data)
+                }
+                else -> JsonDisclosure(when (node.type) {
+                    "system/message", "request/context" -> stringResource(R.string.system_prompt)
+                    "image/offload" -> stringResource(R.string.image_offload)
+                    else -> node.type
+                }, node.data)
+            }
         }
     }
 }
@@ -253,9 +281,6 @@ internal val STRUCTURAL_EVENT_TYPES = setOf(
     "assistant/chunk",
     // A model attempt that settled without a message (harness 0.1.3): replay data, not content.
     "assistant/attempt",
-    // A diff of the workspace is what the Workspace screen is for; the event on its own is a wire
-    // name and a wall of JSON.
-    "workspace/changes",
 )
 
 /**
@@ -309,6 +334,56 @@ internal fun FileChip(name: String, bytes: Long, modifier: Modifier = Modifier) 
             Text(fileSizeText(bytes), style = DsType.caption11, color = colors.labelTertiary)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// User messages
+// ---------------------------------------------------------------------------
+
+/**
+ * The reader's own message, and what holding it offers.
+ *
+ * Copying it back is the point (issue #60): a prompt sent with a mistake in it, then stopped, used
+ * to be stuck in the transcript, and retyping it on a phone keyboard was the only way to fix it.
+ * "Edit as new message" goes one step further and puts it straight in the composer; the rewind,
+ * when the plugin is there, withdraws it too, so the corrected one replaces it instead of following.
+ */
+@Composable
+private fun UserMessageBubble(node: UserMessageNode, text: String, context: ChatNodeContext) {
+    var menuOpen by remember(node.seq) { mutableStateOf(false) }
+    var selecting by remember(node.seq) { mutableStateOf(false) }
+    val copy = com.labteto.dshmobile.ui.components.rememberCopier()
+    UserBubble(
+        text = text,
+        onHold = { menuOpen = true },
+        holdLabel = stringResource(R.string.hold_message_actions),
+    )
+    if (menuOpen) {
+        val actions = buildList {
+            add(HoldAction(stringResource(R.string.common_copy), Icons.Outlined.ContentCopy) { copy(text) })
+            add(HoldAction(stringResource(R.string.hold_select_text), Icons.Outlined.TextFields) { selecting = true })
+            context.onEditPrompt?.let { edit ->
+                add(
+                    HoldAction(
+                        stringResource(R.string.hold_edit_as_new),
+                        Icons.Outlined.Edit,
+                        detail = stringResource(R.string.hold_edit_as_new_detail),
+                    ) { edit(text) },
+                )
+            }
+            context.onRewindTo?.let { rewind ->
+                add(
+                    HoldAction(
+                        stringResource(R.string.hold_rewind_here),
+                        Icons.AutoMirrored.Outlined.Undo,
+                        detail = stringResource(R.string.hold_rewind_here_detail),
+                    ) { rewind(node.seq, node.previewText) },
+                )
+            }
+        }
+        HoldMenu(onDismiss = { menuOpen = false }, actions = actions, preview = text)
+    }
+    if (selecting) SelectTextDialog(text) { selecting = false }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,8 +462,8 @@ private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContex
             // [splitReasoning] hands the run — has no text to copy and no seq of its own to branch
             // from, so tapping it does nothing.
             visible = actionsVisible && !streaming && node.hasAnswerContent(),
-            enter = fadeIn(DsAnimations.fade),
-            exit = fadeOut(DsAnimations.fade),
+            enter = fadeIn(DsAnimations.fade) + expandVertically(DsAnimations.expand),
+            exit = fadeOut(DsAnimations.fade) + shrinkVertically(DsAnimations.expand),
         ) {
             MessageActionsRow(node, context)
         }
@@ -401,15 +476,13 @@ private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContex
  */
 @Composable
 private fun MessageActionsRow(node: AssistantMessageNode, context: ChatNodeContext) {
-    val colors = DsTheme.colors
-    val clipboard = LocalClipboardManager.current
+    val copy = com.labteto.dshmobile.ui.components.rememberCopier()
     Row(
-        modifier = Modifier.padding(top = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ActionIcon(Icons.Filled.ContentCopy, stringResource(R.string.chat_copy_message)) {
-            clipboard.setText(AnnotatedString(node.plainText))
+            copy(node.plainText)
         }
         ActionIcon(Icons.AutoMirrored.Outlined.CallSplit, stringResource(R.string.chat_branch_message)) {
             context.onBranchFrom(node.seq)
@@ -429,14 +502,14 @@ private fun ActionIcon(
     label: String,
     onClick: () -> Unit,
 ) {
-    Icon(
-        icon,
+    // A full touch target around an 18dp glyph. The 28dp icons with 4dp between them were close
+    // enough that copy and branch were easy to swap by accident.
+    com.labteto.dshmobile.ui.components.DsIconButton(
+        icon = icon,
         contentDescription = label,
+        onClick = onClick,
         tint = DsTheme.colors.labelTertiary,
-        modifier = Modifier
-            .size(28.dp)
-            .clickable(onClick = onClick)
-            .padding(6.dp),
+        iconSize = 18.dp,
     )
 }
 
@@ -468,6 +541,8 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
         viewTitle = null,
     )
     var expanded by remember(node.callId) { mutableStateOf(false) }
+    var holdOpen by remember(node.callId) { mutableStateOf(false) }
+    val holdLabel = stringResource(R.string.hold_tool_actions)
     // The leading slot carries the outcome: a red dot for a failed call, the tool glyph otherwise.
     val state = when {
         result?.isError == true -> DisclosureState.Error
@@ -488,8 +563,12 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
         summaryOverride = row.summary,
         iconOverride = row.variant.featherIcon(),
         state = state,
+        onHold = { holdOpen = true },
+        holdLabel = holdLabel,
         header = if (compact) ({
-            Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).clickable(role = Role.Button) { expanded = !expanded }.padding(vertical = 4.dp),
+            Row(Modifier.fillMaxWidth().heightIn(min = 32.dp)
+                .clickableWithHold(holdLabel, onHold = { holdOpen = true }, role = Role.Button) { expanded = !expanded }
+                .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Icon(if (node.name == "read_image") FeatherIcons.Image else row.variant.featherIcon(), null, Modifier.size(14.dp), tint = colors.labelTertiary)
                 Text(row.title, style = DsType.small13, color = colors.labelSecondary)
@@ -498,11 +577,17 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
                 if (expanded && elapsed != null) Text(elapsed, style = DsType.caption11, color = colors.labelCaption)
                 Text(when (state) { DisclosureState.Error -> "!"; DisclosureState.Running -> "…"; else -> "✓" },
                     style = DsType.caption11, color = if (state == DisclosureState.Error) colors.error else colors.labelTertiary)
-                Icon(FeatherIcons.ChevronRight, null, Modifier.size(14.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f }, tint = colors.labelTertiary)
+                val chevron by animateFloatAsState(if (expanded) 90f else 0f, DsAnimations.chevron, label = "toolChevron")
+                Icon(FeatherIcons.ChevronRight, null, Modifier.size(14.dp).graphicsLayer { rotationZ = chevron }, tint = colors.labelTertiary)
             }
         }) else null,
     )
-    if (expanded) {
+    if (holdOpen) ToolHoldMenu(node, result, row.filePath, context) { holdOpen = false }
+    AnimatedVisibility(
+        visible = expanded,
+        enter = fadeIn(DsAnimations.fade) + expandVertically(DsAnimations.expand),
+        exit = fadeOut(DsAnimations.fade) + shrinkVertically(DsAnimations.expand),
+    ) { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // What the call returned, not the file as it is now: the durable attachment survives the
         // file changing or being deleted, and shares the transcript's decoded-image cache.
         val images = remember(result?.content) { toolResultImages(result?.content) }
@@ -517,7 +602,7 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
         result?.content?.let { JsonDisclosure(stringResource(R.string.chat_output_placeholder), it) }
         result?.meta?.let { JsonDisclosure(node.name, it) }
         PtcChildren(node.callId, context.nodes.filterIsInstance<OtherNode>())
-    }
+    } }
     if (result?.isError == true) {
         // The dot is colour-only, so the word stays — but without a second dot beside it.
         //

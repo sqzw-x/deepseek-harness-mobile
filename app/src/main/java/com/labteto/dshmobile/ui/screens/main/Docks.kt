@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -21,10 +25,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -45,7 +51,11 @@ import com.labteto.dshmobile.ui.components.DsDialog
 import com.labteto.dshmobile.ui.components.DsMenu
 import com.labteto.dshmobile.ui.components.DsPill
 import com.labteto.dshmobile.ui.components.FeatherIcons
+import com.labteto.dshmobile.ui.components.HoldAction
+import com.labteto.dshmobile.ui.components.HoldMenu
 import com.labteto.dshmobile.ui.components.MenuItem
+import com.labteto.dshmobile.ui.components.holdable
+import com.labteto.dshmobile.ui.components.rememberCopier
 import com.labteto.dshmobile.ui.components.SectionHeader
 import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.formatDurationMs
@@ -67,7 +77,8 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun TodoDock(todos: List<TodoEntry>, modifier: Modifier = Modifier) {
     if (todos.isEmpty()) return
-    var expanded by remember(todos) { mutableStateOf(false) }
+    // Not keyed on the list: every todo update used to fold an open dock shut under the reader.
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val completed = todos.count { it.status == "completed" }
     DisclosureRow(
         title = stringResource(R.string.chat_todo_title),
@@ -116,6 +127,7 @@ internal fun GoalBar(goal: GoalSnapshot, store: SessionStore, modifier: Modifier
     val scope = rememberCoroutineScope()
     val colors = DsTheme.colors
     var editing by remember { mutableStateOf(false) }
+    var clearing by remember { mutableStateOf(false) }
     var editText by remember(goal.revision) { mutableStateOf(goal.objective) }
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         StateDot(
@@ -167,10 +179,20 @@ internal fun GoalBar(goal: GoalSnapshot, store: SessionStore, modifier: Modifier
                 }
                 add(MenuItem(stringResource(R.string.goal_edit)) { editing = true })
                 add(
-                    MenuItem(stringResource(R.string.goal_clear), danger = true) {
-                        scope.launch { store.goalAction("clear") }
-                    },
+                    MenuItem(stringResource(R.string.goal_clear), danger = true) { clearing = true },
                 )
+            },
+        )
+    }
+    if (clearing) {
+        ConfirmDialog(
+            title = stringResource(R.string.goal_clear),
+            body = goal.objective,
+            confirmLabel = stringResource(R.string.goal_clear),
+            onDismiss = { clearing = false },
+            onConfirm = {
+                clearing = false
+                scope.launch { store.goalAction("clear") }
             },
         )
     }
@@ -223,9 +245,20 @@ internal fun QueueDock(queue: List<QueueItem>, store: SessionStore, modifier: Mo
         busy = true
         scope.launch { try { store.updateQueue(id, action, text, sessionId) } finally { busy = false } }
     }
-    var expanded by remember(queue.size) { mutableStateOf(false) }
+    // Kept open while turns join or leave the queue; it closes only for another session.
+    var expanded by rememberSaveable(sessionId) { mutableStateOf(false) }
     var editingId by remember { mutableStateOf<String?>(null) }
     var editText by remember { mutableStateOf("") }
+    // A queued turn is something the reader already sent, so it holds like their bubble does.
+    var heldId by remember { mutableStateOf<String?>(null) }
+    val copy = rememberCopier()
+    val holdLabel = stringResource(R.string.hold_message_actions)
+    fun fullText(item: QueueItem): String =
+        (item.content as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("text").asString() }
+            ?.joinToString("\n")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.previewText
 
     DisclosureRow(
         title = stringResource(R.string.chat_queue_title),
@@ -244,7 +277,8 @@ internal fun QueueDock(queue: List<QueueItem>, store: SessionStore, modifier: Mo
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 28.dp, top = 2.dp),
+                    .padding(start = 28.dp, top = 2.dp)
+                    .holdable(holdLabel) { heldId = item.id },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -256,7 +290,7 @@ internal fun QueueDock(queue: List<QueueItem>, store: SessionStore, modifier: Mo
                     modifier = Modifier.weight(1f),
                 )
                 Spacer(Modifier.width(8.dp))
-                DsPill(text = item.placement)
+                DsPill(text = queuePlacementLabel(item.placement))
                 if (!busy && !blocked && item.placement != "steering") DsMenu(
                     anchor = {
                         Icon(
@@ -269,7 +303,7 @@ internal fun QueueDock(queue: List<QueueItem>, store: SessionStore, modifier: Mo
                     items = listOf(
                         MenuItem(stringResource(R.string.chat_queue_edit)) {
                             editingId = item.id
-                            editText = (item.content as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.get("text").asString() }?.joinToString("\n") ?: item.previewText
+                            editText = fullText(item)
                         },
                         MenuItem(stringResource(R.string.chat_queue_remove), danger = true) {
                             change(item.id, "remove")
@@ -282,6 +316,30 @@ internal fun QueueDock(queue: List<QueueItem>, store: SessionStore, modifier: Mo
             }
         }
         Spacer(Modifier.height(2.dp))
+    }
+
+    // Looked up by id on every pass, so a turn that leaves the queue while its menu is open takes
+    // the menu with it instead of leaving actions aimed at something that is gone.
+    queue.firstOrNull { it.id == heldId }?.let { item ->
+        val text = fullText(item)
+        val changeable = !busy && !blocked && item.placement != "steering"
+        HoldMenu(
+            onDismiss = { heldId = null },
+            preview = text,
+            actions = buildList {
+                add(HoldAction(stringResource(R.string.common_copy), Icons.Outlined.ContentCopy) { copy(text) })
+                if (changeable) {
+                    add(HoldAction(stringResource(R.string.chat_queue_edit), Icons.Outlined.Edit) {
+                        editingId = item.id
+                        editText = text
+                    })
+                    add(HoldAction(stringResource(R.string.chat_queue_steer), Icons.Outlined.Bolt) { change(item.id, "steer") })
+                    add(HoldAction(stringResource(R.string.chat_queue_remove), Icons.Outlined.Delete, danger = true) {
+                        change(item.id, "remove")
+                    })
+                }
+            },
+        )
     }
 
     editingId?.let { id ->
@@ -334,7 +392,7 @@ internal fun StatsFooter(
     var expanded by remember { mutableStateOf(false) }
     val parts = buildList {
         stats?.let {
-            add(stringResource(R.string.chat_stats_turns, it.turns, it.steps))
+            add(pluralStringResource(R.plurals.chat_stats_turn_count, it.turns, it.turns) + " · " + pluralStringResource(R.plurals.trajectory_step_count, it.steps, it.steps))
             add(
                 stringResource(
                     R.string.chat_stats_speed,
@@ -394,4 +452,13 @@ private fun DetailLine(text: String) {
         textAlign = TextAlign.Center,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/** The wire's placement words (`queued`, `steering`, `context`) in the reader's language. */
+@Composable
+private fun queuePlacementLabel(placement: String): String = when (placement) {
+    com.labteto.dshmobile.core.wire.dto.InboxProjection.QUEUED -> stringResource(R.string.chat_queue_placement_queued)
+    com.labteto.dshmobile.core.wire.dto.InboxProjection.STEERING -> stringResource(R.string.chat_queue_placement_steering)
+    com.labteto.dshmobile.core.wire.dto.InboxProjection.CONTEXT -> stringResource(R.string.chat_queue_placement_context)
+    else -> placement
 }

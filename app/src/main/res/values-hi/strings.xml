@@ -109,7 +109,6 @@
     <string name="chat_composer_attach">छवि संलग्न करें</string>
     <string name="chat_composer_remove_image">छवि हटाएं</string>
     <string name="chat_empty_title">अपने Harness के साथ काम शुरू करें</string>
-    <string name="chat_jump_to_latest">नवीनतम पर जाएं</string>
     <string name="chat_empty_hint">नया टर्न शुरू करने के लिए एक संदेश भेजें।</string>
     <string name="chat_load_older">पुराने संदेश लोड करें</string>
     <string name="chat_loading_older">पुराने संदेश लोड हो रहे हैं…</string>
@@ -601,6 +600,7 @@
     <string name="chat_activity_running_tool">टूल चल रहा है</string>
     <string name="chat_tool_group_failed">%1$d विफल</string>
     <string name="chat_thought_process">विचार प्रक्रिया</string>
+    <string name="chat_process_title">कार्यप्रणाली</string>
     <!-- ==== This phone (Termux) ==== -->
     <string name="connect_mode_loopback">यह फ़ोन</string>
     <string name="connect_mode_loopback_hint">इसी फ़ोन पर चल रहे harness से बात करें — Termux में, या adb reverse से यहाँ फ़ॉरवर्ड किया हुआ। कुछ भी डिवाइस से बाहर नहीं जाता, और harness ऐप को लोकल मानता है। फिर भी यह इस फ़ोन को एक बार साइन इन करता है।</string>
@@ -636,4 +636,35 @@
     <string name="update_copy_command">इंस्टॉल कमांड कॉपी करें</string>
     <string name="update_install_started">Termux में डाउनलोड हो रहा है। पूरा होने पर इंस्टॉलर खुलेगा।</string>
     <string name="update_install_failed">Termux अपडेट इंस्टॉल नहीं कर सका (%1$s)।</string>
+    <string name="chat_history_title">इतिहास</string>
+    <string name="chat_history_empty">अभी तक कोई संदेश नहीं भेजा गया।</string>
+    <string name="chat_history_no_match">कोई संदेश मेल नहीं खाता।</string>
+    <string name="chat_history_image">छवि</string>
+    <string name="hold_message_actions">संदेश के विकल्प</string>
+    <string name="hold_tool_actions">टूल कॉल के विकल्प</string>
+    <string name="hold_file_actions">फ़ाइल के विकल्प</string>
+    <string name="hold_session_actions">सत्र के विकल्प</string>
+    <string name="hold_workspace_actions">फ़ोल्डर के विकल्प</string>
+    <string name="hold_select_text">टेक्स्ट चुनें</string>
+    <string name="hold_copy_all">सब कॉपी करें</string>
+    <string name="hold_edit_as_new">नए संदेश के रूप में संपादित करें</string>
+    <string name="hold_edit_as_new_detail">इसे कंपोज़र में डालता है। मूल संदेश बना रहता है।</string>
+    <string name="hold_rewind_here">इस संदेश तक रिवाइंड करें</string>
+    <string name="hold_rewind_here_detail">इसे और इसके बाद का सब वापस लेता है, फिर कंपोज़र में डाल देता है</string>
+    <string name="hold_copy_command">कमांड कॉपी करें</string>
+    <string name="hold_copy_path">पाथ कॉपी करें</string>
+    <string name="hold_copy_query">खोज कॉपी करें</string>
+    <string name="hold_copy_output">आउटपुट कॉपी करें</string>
+    <string name="hold_copy_arguments">आर्ग्युमेंट कॉपी करें</string>
+    <string name="hold_open_file">फ़ाइल खोलें</string>
+    <string name="hold_mention">संदेश में उल्लेख करें</string>
+    <string name="hold_send_label">भेजने का तरीका चुनें</string>
+    <string name="hold_send_steer">अभी निर्देशित करें</string>
+    <string name="hold_send_queue">इस टर्न के बाद कतार में रखें</string>
+    <string name="hold_send_tip">सुझाव: एक संदेश के लिए चुनने हेतु भेजें बटन दबाकर रखें।</string>
+    <string name="hold_replace_draft_title">ड्राफ़्ट बदलें?</string>
+    <string name="hold_replace_draft_body">कंपोज़र में पहले से टेक्स्ट है। इस संदेश को संपादित करने से वह बदल जाएगा।</string>
+    <string name="hold_replace_draft_confirm">बदलें</string>
+    <string name="chatlist_show_all">सभी %1$d दिखाएँ</string>
+    <string name="chatlist_show_less">कम दिखाएँ</string>
 </resources>

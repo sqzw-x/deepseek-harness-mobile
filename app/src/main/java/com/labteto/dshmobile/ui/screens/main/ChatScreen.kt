@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,10 +67,12 @@ import com.labteto.dshmobile.ui.screens.main.commands.CommandContext
 import com.labteto.dshmobile.ui.screens.main.commands.CommandDecorations
 import com.labteto.dshmobile.ui.screens.main.commands.CommandUiSpec
 import com.labteto.dshmobile.ui.screens.main.commands.PopupSelectSheet
+import com.labteto.dshmobile.ui.screens.main.commands.RewindDecoration
 import com.labteto.dshmobile.ui.screens.main.commands.SlashMenu
 import com.labteto.dshmobile.ui.screens.main.commands.SlashRow
 import com.labteto.dshmobile.ui.screens.main.commands.activeSlash
 import com.labteto.dshmobile.ui.theme.DsAnimations
+import com.labteto.dshmobile.ui.components.AnimatedPresence
 import com.labteto.dshmobile.ui.theme.DsSpacing
 import com.labteto.dshmobile.ui.theme.DsTheme
 import com.labteto.dshmobile.ui.theme.DsType
@@ -145,6 +148,7 @@ fun ChatScreen(
     }
     var referencePicker by remember(composer.key) { mutableStateOf<AtQuery?>(null) }
     var draft by composer::text
+    var sentTick by remember { mutableIntStateOf(0) }
     var mode by composer::mode
     var tab by rememberSaveable { mutableStateOf(ChatTab.Chat) }
     val attachments = composer.attachments
@@ -152,8 +156,23 @@ fun ChatScreen(
     var panelKey by remember { mutableStateOf<ComposerKey?>(null) }
     var feedback by remember { mutableStateOf<Triple<ComposerKey, String, Boolean>?>(null) }
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
+    // A message chosen from the history sheet, waiting for the transcript to scroll to it. Held
+    // here rather than inside the transcript because the pick is made in a sheet that outlives no
+    // layout of its own, and it has to survive the sheet closing.
+    var pendingJumpSeq by remember { mutableStateOf<Long?>(null) }
+    // Each event's time by sequence, for the transcript's timestamps and the history sheet's. Built
+    // once per journal rather than on every recomposition: a streaming reply recomposes this screen
+    // many times a second without adding a single durable event.
+    val eventTimes = remember(conversation?.journal) {
+        conversation?.journal?.associate { it.seq to it.time }.orEmpty()
+    }
     // A decorated command's picker (the phone's `popupSelect`), keyed by the command it serves.
     var popup by remember(composer.key) { mutableStateOf<Pair<String, CommandUiSpec.PopupSelect>?>(null) }
+    // A message held and sent to rewind, by sequence and preview: rewind's picker, opened on its pick.
+    var rewindFrom by remember(composer.key) { mutableStateOf<Pair<Long, String>?>(null) }
+    // A held prompt waiting on the reader's say-so before it replaces a draft they had started.
+    var replaceDraftWith by remember(composer.key) { mutableStateOf<String?>(null) }
+    var composerFocusTick by remember { mutableIntStateOf(0) }
 
     // Hoisted above the tab swap so each view keeps its own scroll position across switches.
     val chatListState = rememberLazyListState()
@@ -332,7 +351,30 @@ fun ChatScreen(
         return true
     }
 
-    fun send(text: String) {
+    /**
+     * Put a sent prompt back in the composer to be corrected. An empty draft just takes it; one the
+     * reader has started is asked about first, because replacing it would lose what they typed.
+     */
+    fun editPrompt(text: String) {
+        if (draft.isBlank() || draft == text) {
+            draft = text
+            composer.selection = text.length
+            composerFocusTick++
+        } else {
+            replaceDraftWith = text
+        }
+    }
+
+    /** An `@` mention of a workspace path at the end of the draft, as the reference picker writes one. */
+    fun mention(path: String, folder: Boolean) {
+        val mention = fileMention(path, folder) ?: return
+        val end = composer.text.length
+        composer.insertReference(end, end, mention, path, if (folder) "folder" else "file", path)
+        composerFocusTick++
+    }
+
+    /** [deliveryOverride] is a mode picked for this message alone, from holding send. */
+    fun send(text: String, deliveryOverride: String? = null) {
         if (composer.preparing || composer.submitting) { draft = text; return }
         // The composer is disabled for a one-shot child, but a decoration or a restored draft can
         // still reach this: nothing addressed to a finished child is ever accepted, so say so and
@@ -342,8 +384,9 @@ fun ChatScreen(
             toast.second(context.getString(R.string.subagents_readonly))
             return
         }
+        sentTick++
         if (attachments.isEmpty() && dispatchDecorated(text)) return
-        val delivery = mode
+        val delivery = deliveryOverride ?: mode
         val targetId = composer.key.sessionId
         val targetHost = composer.key.host
         val pending = attachments.toList()
@@ -464,6 +507,7 @@ fun ChatScreen(
                 tab = tab,
                 onOpenDrawer = onOpenDrawer,
                 onOpenModels = { sheet = ChatSheet.Models },
+                onOpenHistory = { sheet = ChatSheet.History },
                 onOpenPresets = {
                     scope.launch { store.refreshAgentPresets() }
                     sheet = ChatSheet.Presets
@@ -473,18 +517,23 @@ fun ChatScreen(
                 onTabChange = { tab = it },
                 onOpenWorkspace = { panelKey = composer.key },
                 workspaceEnabled = currentSessionId != null,
+                historyEnabled = currentSessionId != null,
             )
 
-            connectionError?.let {
-                androidx.compose.material3.TextButton(onClick = { store.retryConnection() }) { ConnectionBanner(it) }
+            AnimatedPresence(connectionError) {
+                ConnectionBanner(
+                    message = it,
+                    actionLabel = stringResource(R.string.common_retry),
+                    onAction = { store.retryConnection() },
+                )
             }
-            if (conversation?.gap == true) {
-                ConnectionBanner(stringResource(R.string.common_reconnecting))
+            AnimatedPresence(Unit.takeIf { conversation?.gap == true && connectionError == null }) {
+                ConnectionBanner(stringResource(R.string.common_reconnecting), warning = true)
             }
 
             val nodeContext = ChatNodeContext(
                 nodes = conversation?.nodes ?: emptyList(),
-                eventTimes = conversation?.journal?.associate { it.seq to it.time }.orEmpty(),
+                eventTimes = eventTimes,
                 running = conversation?.running == true,
                 cwd = workingDirectory,
                 onOpenSubagent = { childId ->
@@ -496,6 +545,20 @@ fun ChatScreen(
                     conversation?.nodes?.filterIsInstance<com.labteto.dshmobile.core.session.AssistantMessageNode>()
                         ?.firstOrNull { it.seq == seq }?.messageId?.let { feedback = Triple(composer.key, it, positive) }
                 },
+                // Lambdas rather than references, for the reason given at the composer's `onSend`:
+                // a reference to a local function compares equal whatever composer it captured.
+                onEditPrompt = if (currentSessionId != null) ({ text -> editPrompt(text) }) else null,
+                // The rewind plugin's own picker refuses nothing while a turn runs, but withdrawing
+                // the message a running turn is answering is not something to offer from a hold.
+                onRewindTo = if (
+                    currentSessionId != null && conversation?.running != true &&
+                    commandsAvailable && RewindDecoration.recognizes(commands)
+                ) {
+                    { seq, preview -> rewindFrom = seq to preview }
+                } else {
+                    null
+                },
+                onMention = if (currentSessionId != null) ({ path, folder -> mention(path, folder) }) else null,
             )
 
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -527,6 +590,14 @@ fun ChatScreen(
                             listState = chatListState,
                             onLoadOlder = { scope.launch { store.loadOlder() } },
                             onLaidOut = store::markSessionSwitchRendered,
+                            jumpToSeq = pendingJumpSeq,
+                            onJumpConsumed = { pendingJumpSeq = null },
+                            sentTick = sentTick,
+                            onSuggestion = if (currentSessionId != null) {
+                                { text -> draft = text; composer.selection = text.length }
+                            } else {
+                                null
+                            },
                         )
                         ChatTab.Trajectory -> TrajectoryTab(
                             conversation = conversation,
@@ -534,18 +605,12 @@ fun ChatScreen(
                             usage = tokenUsage,
                             cwd = workingDirectory,
                             listState = trajectoryListState,
+                            loadingOlder = loadingOlder,
+                            loadOlderFailed = loadOlderFailed,
+                            onLoadOlder = { scope.launch { store.loadOlder() } },
                         )
                     }
                 }
-                // Above the composer rather than over it: the transcript is reversed, so the
-                // newest message is index 0 and being anywhere else means history is being read.
-                JumpToLatest(
-                    visible = tab == ChatTab.Chat && chatListState.firstVisibleItemIndex > 0,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = 12.dp),
-                    onClick = { scope.launch { chatListState.animateScrollToItem(0) } },
-                )
                 }
 
                 conversation?.let { conv ->
@@ -555,16 +620,18 @@ fun ChatScreen(
                             .padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        parseTodos(conv.projections["todos"])?.let { TodoDock(it) }
-                        parseGoal(conv.projections["goal"])?.let { GoalBar(it, store) }
-                        QueueDock(conv.queue, store)
+                        // Each dock slides in and out on its own, so one arriving mid-turn eases the
+                        // transcript up rather than shoving it by a whole row in a single frame.
+                        AnimatedPresence(parseTodos(conv.projections["todos"])?.takeIf { it.isNotEmpty() }) { TodoDock(it) }
+                        AnimatedPresence(parseGoal(conv.projections["goal"])) { GoalBar(it, store) }
+                        AnimatedPresence(conv.queue.takeIf { it.isNotEmpty() }) { QueueDock(it, store) }
                     }
                 }
 
                 // Server-initiated requests take over the bottom of the screen: they block the turn,
                 // so burying them behind a scroll would strand the session.
-                val approval = pendingApproval
-                if (approval != null && approval.sessionId == currentSessionId) {
+                val approval = pendingApproval?.takeIf { it.sessionId == currentSessionId }
+                AnimatedPresence(approval, enter = DsAnimations.cardEnter, exit = DsAnimations.cardExit) { approval ->
                     // A refusal is said out loud here rather than swallowed, for the reason [refusalOf]
                     // gives: the host's wait — and the tool call behind it — stays open, and a panel
                     // that reported nothing would read as two buttons that do nothing.
@@ -579,8 +646,8 @@ fun ChatScreen(
                         onReject = { decide(false) },
                     )
                 }
-                val questions = pendingQuestions
-                if (questions != null && questions.sessionId == currentSessionId) {
+                val questions = pendingQuestions?.takeIf { it.sessionId == currentSessionId }
+                AnimatedPresence(questions, enter = DsAnimations.cardEnter, exit = DsAnimations.cardExit) { questions ->
                     var planBusy by remember(questions.rpcId) { mutableStateOf(false) }
                     // A plan review rides the question channel but is a different decision, so it gets
                     // the card built for it. The narrowing decides which — and hands back anything the
@@ -635,7 +702,7 @@ fun ChatScreen(
 
                 // The `/` autocomplete sits where the web's does: directly above the composer,
                 // only while the draft is a slash token being typed.
-                activeSlash(draft, composer.selection)?.let { slash ->
+                AnimatedPresence(activeSlash(draft, composer.selection)) { slash ->
                     SlashMenu(
                         query = slash,
                         commands = if (commandsAvailable) commands else emptyList(),
@@ -715,7 +782,9 @@ fun ChatScreen(
                     // open when this screen first composed. A lambda is rebuilt when what it captures
                     // changes and compares by identity, so the composer always holds the current one.
                     onSend = { text -> send(text) },
+                    onSendWith = { text, delivery -> send(text, delivery) },
                     onStop = { scope.launch { store.cancelTurn() } },
+                    focusTick = composerFocusTick,
                 )
 
                 StatsFooter(stats = sessionStats, usage = tokenUsage)
@@ -735,7 +804,42 @@ fun ChatScreen(
             onDismiss = { popup = null },
         )
     }
-    panelKey?.let { key -> WorkspacePanels(store, store.panels.get(key), onDismiss = { panelKey = null }) }
+    rewindFrom?.let { (seq, preview) ->
+        val rewindContext = commandContext(composer.key.sessionId, composer.key.host)
+        PopupSelectSheet(
+            command = "rewind",
+            spec = RewindDecoration.ui as CommandUiSpec.PopupSelect,
+            context = rewindContext,
+            onDismiss = { rewindFrom = null },
+            initialStep = remember(seq) { RewindDecoration.fromMessage(rewindContext, seq, preview) },
+        )
+    }
+    replaceDraftWith?.let { text ->
+        ConfirmDialog(
+            title = stringResource(R.string.hold_replace_draft_title),
+            body = stringResource(R.string.hold_replace_draft_body),
+            confirmLabel = stringResource(R.string.hold_replace_draft_confirm),
+            onDismiss = { replaceDraftWith = null },
+            onConfirm = {
+                replaceDraftWith = null
+                draft = text
+                composer.selection = text.length
+                composerFocusTick++
+            },
+        )
+    }
+    panelKey?.let { key ->
+        WorkspacePanels(
+            store,
+            store.panels.get(key),
+            onDismiss = { panelKey = null },
+            // Mentioning closes the panel: the chip in the composer is where the reader goes next.
+            onMention = { path, folder ->
+                mention(path, folder)
+                panelKey = null
+            },
+        )
+    }
     feedback?.let { (key, id, positive) -> FeedbackDialog(store, key, id, positive) { feedback = null } }
     when (sheet) {
         ChatSheet.Commands -> CommandSheet(
@@ -768,6 +872,28 @@ fun ChatScreen(
             onDismiss = { sheet = null },
         )
         ChatSheet.Models -> ModelsSheet(models = models, store = store, onDismiss = { sheet = null })
+        ChatSheet.History -> HistorySheet(
+            entries = remember(conversation?.nodes, conversation?.running, eventTimes) {
+                historyEntries(
+                    nodes = conversation?.nodes.orEmpty(),
+                    running = conversation?.running == true,
+                    eventTimes = eventTimes,
+                )
+            },
+            hasMore = conversation?.hasMore == true,
+            loadingOlder = loadingOlder,
+            loadOlderFailed = loadOlderFailed,
+            onLoadOlder = { scope.launch { store.loadOlder() } },
+            onPick = { seq ->
+                // Closing first: the scroll happens on the transcript's next composition, and
+                // leaving the sheet over it would hide the very message the pick was for.
+                pendingJumpSeq = seq
+                sheet = null
+                tab = ChatTab.Chat
+            },
+            onDismiss = { sheet = null },
+            onEdit = if (currentSessionId != null) ({ text -> editPrompt(text) }) else null,
+        )
         ChatSheet.Presets -> PresetsSheet(
             presets = agentPresets,
             currentPreset = currentSession?.agentPreset,
@@ -787,7 +913,7 @@ fun ChatScreen(
 }
 
 /** Which sheet, if any, is open over the chat surface. */
-private enum class ChatSheet { Commands, Models, Presets, Subagents }
+private enum class ChatSheet { Commands, Models, History, Presets, Subagents }
 
 /**
  * A picked document's display name and size, as its provider reports them.
@@ -854,29 +980,3 @@ internal fun decodePick(bytes: ByteArray): DecodedPick {
 /** The composer thumbnail is 56dp; decoding much past that is wasted memory. */
 private const val PREVIEW_WIDTH_PX = 224
 
-/**
- * Jumps the transcript back to its newest message, which in a reversed list is index 0.
- *
- * A composable of its own because the scoped `AnimatedVisibility` overloads resolve differently
- * depending on the enclosing layout, and this one sits in a `Box` inside a `Column`.
- */
-@Composable
-private fun JumpToLatest(visible: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    AnimatedVisibility(
-        visible = visible,
-        modifier = modifier,
-        enter = fadeIn(DsAnimations.fade),
-        exit = fadeOut(DsAnimations.fade),
-    ) {
-        FloatingActionButton(
-            onClick = onClick,
-            containerColor = DsTheme.colors.bgLayer2,
-            contentColor = DsTheme.colors.labelPrimary,
-        ) {
-            Icon(
-                Icons.Filled.KeyboardArrowDown,
-                contentDescription = stringResource(R.string.chat_jump_to_latest),
-            )
-        }
-    }
-}

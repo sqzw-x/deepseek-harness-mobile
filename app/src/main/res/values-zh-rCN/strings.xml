@@ -109,7 +109,6 @@
     <string name="chat_composer_attach">附加图片</string>
     <string name="chat_composer_remove_image">移除图片</string>
     <string name="chat_empty_title">开始使用你的 Harness</string>
-    <string name="chat_jump_to_latest">跳到最新</string>
     <string name="chat_empty_hint">发送一条消息即可开始新一轮。</string>
     <string name="chat_load_older">加载更早的消息</string>
     <string name="chat_loading_older">正在加载更早的消息…</string>
@@ -601,6 +600,7 @@
     <string name="chat_activity_running_tool">正在运行工具</string>
     <string name="chat_tool_group_failed">失败：%1$d</string>
     <string name="chat_thought_process">思考过程</string>
+    <string name="chat_process_title">过程</string>
     <!-- ==== This phone (Termux) ==== -->
     <string name="connect_mode_loopback">本机</string>
     <string name="connect_mode_loopback_hint">连接运行在本手机上的 harness：在 Termux 中运行，或通过 adb reverse 转发到本机。数据不会离开设备，harness 会把应用视为本地客户端。它仍会为本手机登录一次。</string>
@@ -636,4 +636,35 @@
     <string name="update_copy_command">复制安装命令</string>
     <string name="update_install_started">正在 Termux 中下载。下载完成后会打开安装程序。</string>
     <string name="update_install_failed">Termux 无法安装此更新（%1$s）。</string>
+    <string name="chat_history_title">历史记录</string>
+    <string name="chat_history_empty">还没有发送过消息。</string>
+    <string name="chat_history_no_match">没有匹配的消息。</string>
+    <string name="chat_history_image">图片</string>
+    <string name="hold_message_actions">消息操作</string>
+    <string name="hold_tool_actions">工具调用操作</string>
+    <string name="hold_file_actions">文件操作</string>
+    <string name="hold_session_actions">会话操作</string>
+    <string name="hold_workspace_actions">文件夹操作</string>
+    <string name="hold_select_text">选择文本</string>
+    <string name="hold_copy_all">全部复制</string>
+    <string name="hold_edit_as_new">编辑为新消息</string>
+    <string name="hold_edit_as_new_detail">放入输入框，原消息保留。</string>
+    <string name="hold_rewind_here">回退到这条消息</string>
+    <string name="hold_rewind_here_detail">撤回这条及之后的内容，再放回输入框</string>
+    <string name="hold_copy_command">复制命令</string>
+    <string name="hold_copy_path">复制路径</string>
+    <string name="hold_copy_query">复制搜索内容</string>
+    <string name="hold_copy_output">复制输出</string>
+    <string name="hold_copy_arguments">复制参数</string>
+    <string name="hold_open_file">打开文件</string>
+    <string name="hold_mention">在消息中引用</string>
+    <string name="hold_send_label">选择发送方式</string>
+    <string name="hold_send_steer">立即引导</string>
+    <string name="hold_send_queue">排队，等本回合结束</string>
+    <string name="hold_send_tip">提示：长按发送按钮，可为单条消息选择发送方式。</string>
+    <string name="hold_replace_draft_title">替换草稿？</string>
+    <string name="hold_replace_draft_body">输入框里已有内容，编辑这条消息会替换掉它。</string>
+    <string name="hold_replace_draft_confirm">替换</string>
+    <string name="chatlist_show_all">显示全部 %1$d</string>
+    <string name="chatlist_show_less">收起</string>
 </resources>

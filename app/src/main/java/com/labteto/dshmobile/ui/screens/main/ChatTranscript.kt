@@ -1,5 +1,24 @@
 package com.labteto.dshmobile.ui.screens.main
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.labteto.dshmobile.ui.components.StateDot
+import com.labteto.dshmobile.ui.components.StateDotState
+import com.labteto.dshmobile.ui.theme.DsAnimations
+import com.labteto.dshmobile.ui.theme.DsShapes
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.core.session.AssistantMessageNode
 import com.labteto.dshmobile.core.session.ConversationSnapshot
+import com.labteto.dshmobile.core.session.TurnStartNode
 import com.labteto.dshmobile.core.session.UserMessageNode
 import com.labteto.dshmobile.diag.RenderStats
 import com.labteto.dshmobile.ui.components.LocalSelectionDismiss
@@ -108,6 +128,13 @@ internal fun ChatTranscript(
     onLoadOlder: () -> Unit,
     onLaidOut: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
+    /** A message the reader picked out of the history sheet, still waiting to be scrolled to. */
+    jumpToSeq: Long? = null,
+    onJumpConsumed: () -> Unit = {},
+    /** Fills the composer with a starter prompt from the empty state; null offers none. */
+    onSuggestion: ((String) -> Unit)? = null,
+    /** Bumped each time the reader sends: their own message is always worth landing on. */
+    sentTick: Int = 0,
 ) {
     // Only the nodes that draw something: a zero-height item still costs its 4dp gap, and a turn's
     // worth of structural events stacks those gaps into a blank band under the chrome. The thinking
@@ -117,8 +144,13 @@ internal fun ChatTranscript(
     // Reversed here rather than at the call site: the fold's natural order is oldest-first, and
     // that is the order every other reader of `nodes` wants.
     val rows = remember(conversation?.nodes, context.running) {
-        groupToolRows(
-            renderableChatNodes(splitReasoning(conversation?.nodes.orEmpty()), context.running),
+        val nodes = conversation?.nodes.orEmpty()
+        foldProcessRows(
+            rows = groupToolRows(renderableChatNodes(splitReasoning(nodes), context.running)),
+            // Read from the unfiltered nodes: a turn start draws no row, so the row list alone
+            // cannot say where one turn ends and the next begins.
+            turnStarts = nodes.filterIsInstance<TurnStartNode>().map { it.seq }.sorted(),
+            running = context.running,
         ).asReversed()
     }
     val hasMore = conversation?.hasMore == true
@@ -235,6 +267,47 @@ internal fun ChatTranscript(
         }
     }
 
+    // A pick from the history sheet. The sheet knows only sequences; which row index a sequence owns
+    // is decided by the grouping above, so the lookup happens here rather than there.
+    //
+    // Keyed on the pick alone. Re-running on every row change would restart a jump halfway through
+    // whenever a running reply added a row, and the sheet only offers prompts that are loaded, so
+    // there is no later page worth waiting for. The pick is consumed however the jump ends —
+    // landed, missed, or cut short by the reader's own drag — so a leftover cannot fire later and
+    // pull them back.
+    //
+    // Following the tail is switched off first, or the next row a running reply adds would pin the
+    // tail back under a reader who deliberately left it. Picking the tail itself keeps it on.
+    LaunchedEffect(jumpToSeq) {
+        val seq = jumpToSeq ?: return@LaunchedEffect
+        try {
+            val index = historyRowIndex(rows, seq) ?: return@LaunchedEffect
+            if (index == 0) {
+                followTail = true
+                listState.requestScrollToItem(0)
+                return@LaunchedEffect
+            }
+            followTail = false
+            // The prompt goes to the top of the viewport, not the bottom. A reversed list puts the
+            // item it scrolls to at its start, which is the bottom edge: the prompt would sit on the
+            // composer with the reply it asked for out of view below it, and the screen filled with
+            // the turn before. Both steps are instant; the second needs the prompt measured, since
+            // its height decides how far back to come, and clamps at the tail on its own.
+            listState.scrollToItem(index)
+            val info = listState.layoutInfo
+            val item = info.visibleItemsInfo.firstOrNull { it.key == seq } ?: return@LaunchedEffect
+            val contentEnd = info.viewportEndOffset - info.afterContentPadding
+            listState.scrollBy((item.offset + item.size - contentEnd).toFloat())
+            // Read where the jump came to rest rather than leaving it to the scroll-session watcher:
+            // both scrolls start and finish inside one frame, so it never sees them. A newest prompt
+            // whose turn is shorter than the screen stops at the tail, and a reader left at the tail
+            // with following off would watch the next reply land out of view.
+            followTail = atTail()
+        } finally {
+            onJumpConsumed()
+        }
+    }
+
     if (loading) {
         TranscriptSkeleton(modifier)
         return
@@ -247,10 +320,39 @@ internal fun ChatTranscript(
     // Shared by every row: a tap increments it and the selectable texts rebuild without their
     // selection. Without a provider the token stays 0 forever and a selection cannot be cleared.
     val selectionDismiss = remember { mutableIntStateOf(0) }
+    // Rows that arrived below the reader since they last left the tail, counted against the
+    // newest row they had seen. Paging adds rows too, but at the far end, so it cannot inflate this.
+    var seenNewestKey by remember(sessionId) { mutableStateOf<Any?>(null) }
+    // The streaming row's key is shared by every reply in turn, so it cannot mark a place.
+    val newestKey = rows.firstNotNullOfOrNull { row -> transcriptRowKey(row).takeIf { it != STREAMING_ROW_KEY } }
+    LaunchedEffect(followTail, newestKey) { if (followTail) seenNewestKey = newestKey }
+    // A step the reader saw can fold into its turn's Process row when the turn answers, which is
+    // exactly while they are away; that row then stands in for it, or the count drops to nothing
+    // just as the reply lands.
+    val unseen = remember(rows, seenNewestKey) {
+        if (seenNewestKey == null) 0
+        else rows.indexOfFirst { row ->
+            transcriptRowKey(row) == seenNewestKey ||
+                (row is TranscriptRow.Process && row.rows.any { transcriptRowKey(it) == seenNewestKey })
+        }.coerceAtLeast(0)
+    }
+    val awayFromTail by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 240 }
+    }
+    val jumpScope = rememberCoroutineScope()
+    // Sending from halfway up the history used to leave the new message, and the reply to it, out
+    // of view below. A send is the clearest possible "take me to the end".
+    LaunchedEffect(sentTick) {
+        if (sentTick == 0) return@LaunchedEffect
+        followTail = true
+        if (listState.firstVisibleItemIndex > JUMP_SNAP_ROWS) listState.scrollToItem(JUMP_SNAP_ROWS)
+        listState.animateScrollToItem(0)
+    }
     CompositionLocalProvider(LocalSelectionDismiss provides selectionDismiss) {
+    Box(modifier.fillMaxSize()) {
     LazyColumn(
         state = listState,
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .onGloballyPositioned {
                 if (!laidOut && sessionId != null) {
@@ -270,9 +372,19 @@ internal fun ChatTranscript(
     ) {
         if (rows.isEmpty()) {
             item(key = "empty") {
+                // A blank page with a blinking cursor is the hardest place to start from on a
+                // phone keyboard, so a new session offers a few starters. They fill the composer
+                // rather than sending, so each one is a draft to adjust, not a commitment.
+                val suggestions = listOf(
+                    stringResource(R.string.chat_suggest_overview),
+                    stringResource(R.string.chat_suggest_tests),
+                    stringResource(R.string.chat_suggest_changes),
+                )
                 EmptyHero(
                     headline = stringResource(R.string.chat_empty_title),
                     subtitle = stringResource(R.string.chat_empty_hint),
+                    chips = if (onSuggestion != null) suggestions else emptyList(),
+                    onChipClick = { onSuggestion?.invoke(it) },
                 )
             }
         } else {
@@ -283,34 +395,37 @@ internal fun ChatTranscript(
                 // settlement landed — a visible pop at the end of every reply. One constant key
                 // instead: there is only ever one provisional row, and it is the same row before
                 // and after it settles.
-                key = { row ->
-                    when (row) {
-                        is TranscriptRow.Message ->
-                            if ((row.node as? AssistantMessageNode)?.streaming == true) STREAMING_ROW_KEY else row.seq
-                        // A run can begin with the provisional message itself. Key it on the first
-                        // settled item so the settlement does not rebuild the run under the reader.
-                        is TranscriptRow.Activity ->
-                            row.items.firstOrNull { (it as? AssistantMessageNode)?.streaming != true }?.seq ?: row.seq
-                        else -> row.seq
-                    }
-                },
+                key = ::transcriptRowKey,
             ) { row ->
                 RenderStats.rowStart(
                     when (row) {
                         is TranscriptRow.Message -> (row.node::class.simpleName ?: "msg")
                         is TranscriptRow.Activity -> "act"
                         is TranscriptRow.Context -> "ctx"
+                        is TranscriptRow.Process -> "proc"
                     },
                 )
                 val node = (row as? TranscriptRow.Message)?.node
                 val streaming = node is AssistantMessageNode && node.streaming
-                // Placement animation is for rows that move. The streaming row grows in place many
-                // times a second, and animating that reads as jitter rather than motion.
-                Column(if (streaming || !animateRows) Modifier else Modifier.animateItem()) {
+                // Rows fade in as they land, and nothing slides. Every line a streaming reply adds
+                // pushes the rows above it up; a placement animation made them trail that push on
+                // a spring while the reply moved at once, so a tool card would ride over the text
+                // being written for a moment on every new line.
+                //
+                // A reply that just settled is a new key (the streaming key gives way to its seq),
+                // so the list would fade it in from nothing: every finished reply flashed to a
+                // ghost of itself and back. Its text has been on screen the whole time, so assistant
+                // rows take no arrival animation at all.
+                val arrival = when {
+                    streaming || node is AssistantMessageNode || !animateRows -> Modifier
+                    else -> Modifier.animateItem(placementSpec = null)
+                }
+                Column(arrival) {
                     when (row) {
                         is TranscriptRow.Message -> ChatNodeItem(node = row.node, context = context)
                         is TranscriptRow.Activity -> ActivityGroupRow(row.items, context)
                         is TranscriptRow.Context -> ContextGroupRow(row.nodes, context)
+                        is TranscriptRow.Process -> ProcessRow(row, context)
                     }
                 }
             }
@@ -327,6 +442,92 @@ internal fun ChatTranscript(
             }
         }
     }
+
+    // The way back down. Reading history mid-turn is supported on purpose (see the anchoring notes
+    // above), but on a long session the only way back used to be dragging through everything in
+    // between. Shown only once the reader is clearly away, so it does not flicker in on a nudge.
+    AnimatedVisibility(
+        visible = awayFromTail && rows.isNotEmpty(),
+        enter = DsAnimations.popEnter,
+        exit = DsAnimations.popExit,
+        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp),
+    ) {
+        JumpToLatestButton(
+            unseen = unseen,
+            running = context.running,
+            onClick = {
+                followTail = true
+                jumpScope.launch {
+                    // A long way back is mostly rows nobody needs to watch go by: land near the tail
+                    // first, then animate the last stretch so the motion still reads as "down".
+                    if (listState.firstVisibleItemIndex > JUMP_SNAP_ROWS) listState.scrollToItem(JUMP_SNAP_ROWS)
+                    listState.animateScrollToItem(0)
+                }
+            },
+        )
+    }
+    }
+    }
+}
+
+/** How far from the tail a jump snaps before animating the rest of the way. */
+private const val JUMP_SNAP_ROWS = 6
+
+/** The lazy key of a transcript row; see the keying note in [ChatTranscript]. */
+private fun transcriptRowKey(row: TranscriptRow): Any = when (row) {
+    is TranscriptRow.Message ->
+        if ((row.node as? AssistantMessageNode)?.streaming == true) STREAMING_ROW_KEY else row.seq
+    // A run can begin with the provisional message itself. Key it on the first settled item so the
+    // settlement does not rebuild the run under the reader.
+    is TranscriptRow.Activity ->
+        row.items.firstOrNull { (it as? AssistantMessageNode)?.streaming != true }?.seq ?: row.seq
+    // A turn's folded process stands in for its first step, so the row keeps the key it had before
+    // the fold — the reader's place does not move when the turn answers.
+    is TranscriptRow.Process -> transcriptRowKey(row.rows.first())
+    is TranscriptRow.Context -> row.seq
+}
+
+/** A round "back to the newest message" button, with a count of what arrived while away. */
+@Composable
+private fun JumpToLatestButton(unseen: Int, running: Boolean, onClick: () -> Unit) {
+    val colors = DsTheme.colors
+    val label = if (unseen > 0) {
+        pluralStringResource(R.plurals.chat_jump_latest_new, unseen, unseen)
+    } else {
+        stringResource(R.string.chat_jump_latest)
+    }
+    Surface(
+        onClick = onClick,
+        shape = DsShapes.pillFull,
+        color = colors.bgLayer2,
+        border = BorderStroke(1.dp, colors.borderL2),
+        shadowElevation = 6.dp,
+        modifier = Modifier.semantics { contentDescription = label },
+    ) {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 40.dp)
+                .padding(horizontal = if (unseen > 0) 14.dp else 10.dp)
+                .animateContentSize(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (running) StateDot(StateDotState.Running, size = 8.dp)
+            if (unseen > 0) {
+                Text(
+                    pluralStringResource(R.plurals.chat_jump_latest_new, unseen, unseen),
+                    style = DsType.small13Strong,
+                    color = colors.accent,
+                    maxLines = 1,
+                )
+            }
+            Icon(
+                Icons.Filled.ArrowDownward,
+                contentDescription = null,
+                tint = colors.labelSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -342,10 +543,11 @@ private const val STREAMING_ROW_KEY = "streaming-tail"
  *
  * [offerManual] is the third case: automatic paging has spent its budget on a session whose events
  * are mostly not messages, so the list may still be too short to scroll. Without a button there
- * would be nothing left to trigger a page, and the rest of the history would be unreachable.
+ * would be nothing left to trigger a page, and the rest of the history would be unreachable. The
+ * history sheet always passes it: nothing scrolls a sheet to its end to page for it.
  */
 @Composable
-private fun LoadOlderRow(
+internal fun LoadOlderRow(
     loading: Boolean,
     failed: Boolean,
     offerManual: Boolean,

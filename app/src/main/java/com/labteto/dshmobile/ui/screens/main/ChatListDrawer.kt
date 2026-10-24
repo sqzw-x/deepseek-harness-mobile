@@ -3,10 +3,8 @@ package com.labteto.dshmobile.ui.screens.main
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -29,6 +28,13 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.automirrored.outlined.CallSplit
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -45,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,6 +66,10 @@ import com.labteto.dshmobile.ui.components.DsIconButton
 import com.labteto.dshmobile.ui.components.DsPill
 import com.labteto.dshmobile.ui.components.DsMenu
 import com.labteto.dshmobile.ui.components.EmptyHero
+import com.labteto.dshmobile.ui.components.HoldAction
+import com.labteto.dshmobile.ui.components.HoldMenu
+import com.labteto.dshmobile.ui.components.clickableWithHold
+import com.labteto.dshmobile.ui.components.rememberCopier
 import com.labteto.dshmobile.ui.components.MenuItem
 import com.labteto.dshmobile.ui.components.SectionHeader
 import com.labteto.dshmobile.ui.components.StateDot
@@ -80,6 +91,15 @@ private const val SORT_MANUAL = "manual"
 
 /** [com.labteto.dshmobile.connection.HostsStore.sessionSort]: most recently updated first. */
 private const val SORT_UPDATED = "updated"
+
+/**
+ * How many top-level sessions a workspace shows before it folds the rest behind "Show all".
+ *
+ * Five is what fits a phone drawer without scrolling past the next workspace, and it is enough to
+ * cover what most people touched today. It is a ceiling, not a rule: the session you are looking at
+ * is shown even when it sits further down.
+ */
+internal const val WORKSPACE_PREVIEW_LIMIT = 5
 
 /**
  * The chat history: workspaces, their sessions, and search.
@@ -119,6 +139,7 @@ fun ChatListDrawer(
     val sortByRecency = sessionSort == SORT_UPDATED
     var newWorkspaceOpen by remember { mutableStateOf(false) }
     var newSessionOpen by remember { mutableStateOf(false) }
+
     // Persisted, not remembered: a group you closed stays closed. Absence means expanded, so the
     // same workspaces are open whatever session happens to be on screen.
     val collapsedWorkspaces by hostsStore.collapsedWorkspaces
@@ -138,6 +159,10 @@ fun ChatListDrawer(
             store.refreshSessions()
         }
     }
+
+    // Which workspaces you asked to see in full. Separate from `collapsedWorkspaces`: one says
+    // whether the group is open at all, the other whether the preview inside it has been widened.
+    val showAllWorkspaces = remember { mutableStateMapOf<String, Boolean>() }
 
     LaunchedEffect(query) {
         delay(250)
@@ -365,7 +390,18 @@ fun ChatListDrawer(
                     )
                 }
                 if (!isCollapsed) {
-                    val flat = roots.flatMap { subtree(it) }
+                    // A group that opens to twenty rows is a wall you have to scroll past to reach
+                    // the next workspace. The newest few say what you have been doing; the rest are
+                    // one tap away. The session you are looking at is always kept, so opening the
+                    // drawer mid-run never hides where you are.
+                    val preview = visibleWorkspaceRoots(roots, WORKSPACE_PREVIEW_LIMIT, openPath)
+                    // Only a preview that actually hides something gets the control. Six sessions
+                    // with the open one sixth preview as all six, and a "Show less" there would
+                    // fold nothing.
+                    val foldable = preview.size < roots.size
+                    val showAll = foldable && showAllWorkspaces[workspace.workspaceId] == true
+                    val shownRoots = if (showAll) roots else preview
+                    val flat = shownRoots.flatMap { subtree(it) }
                     items(flat, key = { it.first.sessionId }) { (session, depth) ->
                         Box(Modifier.animateItem()) {
                             SessionRowItem(
@@ -379,6 +415,21 @@ fun ChatListDrawer(
                                 childrenExpanded = isExpanded(session.sessionId),
                                 onToggleChildren = { toggleChildren(session.sessionId) },
                                 pinned = pinnedIds?.let { session.sessionId in it },
+                            )
+                        }
+                    }
+                    if (foldable) {
+                        item(key = "ws-more-${workspace.workspaceId}") {
+                            ShowAllRow(
+                                // "Show all" counts the whole group, the same number the header
+                                // shows. The hidden count read as a total: twenty sessions said
+                                // "Show all 15".
+                                text = if (showAll) {
+                                    stringResource(R.string.chatlist_show_less)
+                                } else {
+                                    stringResource(R.string.chatlist_show_all, roots.size)
+                                },
+                                onClick = { showAllWorkspaces[workspace.workspaceId] = !showAll },
                             )
                         }
                     }
@@ -526,12 +577,43 @@ private fun SortChip(byRecency: Boolean, onPick: (byRecency: Boolean) -> Unit) {
 // ---------------------------------------------------------------------------
 
 /**
+ * The one-line control under a workspace's preview list.
+ *
+ * It is a row rather than a button in the header because it belongs to the list it shortens, and it
+ * has to read differently in each state — "Show all 20" invites you to open, "Show less" has to be
+ * found again after the list grew. Both are the same tap target in the same place, so nothing moves.
+ */
+@Composable
+private fun ShowAllRow(text: String, onClick: () -> Unit) {
+    val colors = DsTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(DsShapes.row)
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 36.dp)
+            // Sits under the session titles, not under the workspace header. A top-level session
+            // row puts 54dp before its title: 8 padding, the 2dp rail, 8, the 16dp chevron slot, 4,
+            // the 8dp state dot, 8.
+            .padding(start = 54.dp, end = DsSpacing.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            style = DsType.small13Strong,
+            color = colors.labelSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
  * A workspace header that collapses its group and carries the workspace verbs.
  *
  * Rename and remove exist on the wire and had no UI at all; a long-press menu is where a
  * phone user expects to find them.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun WorkspaceHeader(
     workspace: WorkspaceRow,
@@ -558,7 +640,11 @@ private fun WorkspaceHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(DsShapes.row)
-                .combinedClickable(onClick = onToggle, onLongClick = { menuOpen = true })
+                .clickableWithHold(
+                    holdLabel = stringResource(R.string.hold_workspace_actions),
+                    onHold = { menuOpen = true },
+                    onClick = onToggle,
+                )
                 .padding(vertical = DsSpacing.xsmall),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -583,19 +669,12 @@ private fun WorkspaceHeader(
         }
         if (menuOpen) {
             WorkspaceMenu(
+                label = label,
+                path = workspace.path,
                 onDismiss = { menuOpen = false },
-                onNewSession = {
-                    menuOpen = false
-                    onNewSession()
-                },
-                onRename = {
-                    menuOpen = false
-                    renaming = true
-                },
-                onDelete = {
-                    menuOpen = false
-                    deleting = true
-                },
+                onNewSession = onNewSession,
+                onRename = { renaming = true },
+                onDelete = { deleting = true },
             )
         }
     }
@@ -627,16 +706,26 @@ private fun WorkspaceHeader(
 
 @Composable
 private fun WorkspaceMenu(
+    label: String,
+    path: String,
     onDismiss: () -> Unit,
     onNewSession: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    DsDialog(title = null, onDismiss = onDismiss) {
-        SheetRow(title = stringResource(R.string.chatlist_workspace_new_session), onClick = onNewSession)
-        SheetRow(title = stringResource(R.string.chatlist_workspace_rename), onClick = onRename)
-        SheetRow(title = stringResource(R.string.chatlist_workspace_delete), onClick = onDelete)
-    }
+    val copy = rememberCopier()
+    HoldMenu(
+        onDismiss = onDismiss,
+        preview = label,
+        actions = buildList {
+            add(HoldAction(stringResource(R.string.chatlist_workspace_new_session), Icons.Outlined.Add, onClick = onNewSession))
+            add(HoldAction(stringResource(R.string.chatlist_workspace_rename), Icons.Outlined.Edit, onClick = onRename))
+            if (path.isNotBlank()) {
+                add(HoldAction(stringResource(R.string.hold_copy_path), Icons.Outlined.ContentCopy) { copy(path) })
+            }
+            add(HoldAction(stringResource(R.string.chatlist_workspace_delete), Icons.Outlined.Delete, danger = true, onClick = onDelete))
+        },
+    )
 }
 
 /**
@@ -647,7 +736,6 @@ private fun WorkspaceMenu(
  * "Subagents" heading per workspace, which said nothing about which run produced which — with a
  * dozen of them from three sessions it was a wall of near-identical rows.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRowItem(
     session: SessionRow,
@@ -666,6 +754,7 @@ private fun SessionRowItem(
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var archiveConfirmOpen by remember { mutableStateOf(false) }
+    val copy = rememberCopier()
     var archiveBusy by remember { mutableStateOf<com.labteto.dshmobile.data.ArchiveOutcome.Busy?>(null) }
     val chevronRotation by animateFloatAsState(
         targetValue = if (childrenExpanded) 90f else 0f,
@@ -680,15 +769,15 @@ private fun SessionRowItem(
                 .padding(start = (depth * 16).dp)
                 .clip(DsShapes.row)
                 .background(if (isCurrent) colors.sidebarNavActive else androidx.compose.ui.graphics.Color.Transparent)
-                .combinedClickable(
-                    onClick = {
-                        scope.launch {
-                            store.openSession(session.sessionId)
-                            onClose()
-                        }
-                    },
-                    onLongClick = { menuOpen = true },
-                )
+                .clickableWithHold(
+                    holdLabel = stringResource(R.string.hold_session_actions),
+                    onHold = { menuOpen = true },
+                ) {
+                    // Close first. Waiting for the session to load before the drawer moved made
+                    // every switch feel like a stall; the transcript shows its own skeleton.
+                    onClose()
+                    scope.launch { store.openSession(session.sessionId) }
+                }
                 .padding(horizontal = DsSpacing.small, vertical = DsSpacing.xsmall),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -772,28 +861,26 @@ private fun SessionRowItem(
         }
 
         if (menuOpen) {
-            DsDialog(title = null, onDismiss = { menuOpen = false }) {
-                SheetRow(title = stringResource(R.string.chatlist_session_rename)) {
-                    menuOpen = false
-                    renameOpen = true
-                }
-                SheetRow(title = stringResource(R.string.chatlist_session_fork)) {
-                    menuOpen = false
-                    scope.launch { store.forkSession(session.sessionId) }
-                }
-                if (pinned != null) {
-                    SheetRow(
-                        title = stringResource(if (pinned) R.string.chatlist_session_unpin else R.string.chatlist_session_pin),
-                    ) {
-                        menuOpen = false
-                        scope.launch { store.setPinned(session.sessionId, !pinned) }
+            HoldMenu(
+                onDismiss = { menuOpen = false },
+                preview = displaySessionTitle(session),
+                actions = buildList {
+                    add(HoldAction(stringResource(R.string.chatlist_session_rename), Icons.Outlined.Edit) { renameOpen = true })
+                    add(HoldAction(stringResource(R.string.chatlist_session_fork), Icons.AutoMirrored.Outlined.CallSplit) {
+                        scope.launch { store.forkSession(session.sessionId) }
+                    })
+                    if (pinned != null) {
+                        add(
+                            HoldAction(
+                                stringResource(if (pinned) R.string.chatlist_session_unpin else R.string.chatlist_session_pin),
+                                Icons.Outlined.PushPin,
+                            ) { scope.launch { store.setPinned(session.sessionId, !pinned) } },
+                        )
                     }
-                }
-                SheetRow(title = stringResource(R.string.chatlist_session_archive)) {
-                    menuOpen = false
-                    archiveConfirmOpen = true
-                }
-            }
+                    add(HoldAction(stringResource(R.string.chatlist_session_copy_id), Icons.Outlined.ContentCopy) { copy(session.sessionId) })
+                    add(HoldAction(stringResource(R.string.chatlist_session_archive), Icons.Outlined.Archive) { archiveConfirmOpen = true })
+                },
+            )
         }
     }
 
@@ -1070,8 +1157,33 @@ internal fun visibleSessions(
 }
 
 /** Display title: an explicit title, else the working directory's folder, else the id. */
-private fun displaySessionTitle(session: SessionRow): String =
+internal fun displaySessionTitle(session: SessionRow): String =
     sessionTitle(session).let { if (session.title.isNullOrBlank()) technicalDisplay(it) else it }
+
+/**
+ * The slice of a workspace's sessions to draw while it is in preview mode.
+ *
+ * Cut from the head, because that is the order the drawer already sorted into — whichever order you
+ * chose, the first entries are the ones you meant to see. Any session on [openPath] is then put back
+ * if the cut removed it: hiding the chat you are reading, inside the group that holds it, is the one
+ * outcome that makes the drawer lie about where you are. The restored row keeps its original
+ * position, so the list stays in the order it claims.
+ *
+ * Order is preserved exactly as passed in — this function sorts nothing, so the caller's preference
+ * (manual order or recency) survives untouched.
+ */
+internal fun visibleWorkspaceRoots(
+    roots: List<SessionRow>,
+    limit: Int,
+    openPath: Set<String>,
+): List<SessionRow> {
+    if (limit <= 0 || roots.size <= limit) return roots
+    // Indices rather than rows, so a restored session keeps its own place in the order instead of
+    // being appended at the bottom, where it would read as the oldest thing you did.
+    val keep = roots.indices.take(limit).toMutableSet()
+    roots.forEachIndexed { index, row -> if (row.sessionId in openPath) keep += index }
+    return roots.filterIndexed { index, _ -> index in keep }
+}
 
 internal fun sessionTitle(session: SessionRow): String {
     val title = session.title?.takeIf { it.isNotBlank() }

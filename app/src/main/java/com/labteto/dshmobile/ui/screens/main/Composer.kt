@@ -35,7 +35,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -52,7 +54,21 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.labteto.dshmobile.ui.components.pressScale
+import com.labteto.dshmobile.ui.components.HoldAction
+import com.labteto.dshmobile.ui.components.HoldMenu
+import com.labteto.dshmobile.ui.components.clickableWithHold
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -171,6 +187,13 @@ internal fun Composer(
     references: List<DraftReference> = emptyList(),
     onOpenReference: (DraftReference) -> Unit = {},
     onAddReference: () -> Unit = {},
+    /**
+     * Sends with a delivery mode chosen for this one message, from holding send mid-turn. Null
+     * leaves send with its tap alone.
+     */
+    onSendWith: ((text: String, mode: String) -> Unit)? = null,
+    /** Bumped to move focus into the field, after something outside it fills the draft. */
+    focusTick: Int = 0,
 ) {
     var editor by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(draft, androidx.compose.ui.text.TextRange(cursor))) }
     androidx.compose.runtime.LaunchedEffect(draft, cursor) {
@@ -185,6 +208,18 @@ internal fun Composer(
     val currentDraft by rememberUpdatedState(draft)
     val currentOnDraftChange by rememberUpdatedState(onDraftChange)
     val currentOnSend by rememberUpdatedState(onSend)
+    var sendMenuOpen by remember { mutableStateOf(false) }
+    val fieldFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    // Text put back from the transcript is there to be edited, so the field takes focus and the
+    // keyboard comes up with it rather than waiting for a tap on the field. Both, because a field
+    // that kept focus after the keyboard was dismissed ignores a focus request and stays closed.
+    androidx.compose.runtime.LaunchedEffect(focusTick) {
+        if (focusTick > 0 && enabled) {
+            runCatching { fieldFocus.requestFocus() }
+            keyboard?.show()
+        }
+    }
 
     Surface(
         modifier = modifier
@@ -253,10 +288,13 @@ internal fun Composer(
                     // unbounded height, omit weight so the editor keeps its natural line height.
                     modifier = Modifier
                         .then(if (boundedHeight) Modifier.weight(1f, fill = false) else Modifier)
-                        .fillMaxWidth().onPreviewKeyEvent { event ->
+                        .fillMaxWidth()
+                        .focusRequester(fieldFocus)
+                        .onPreviewKeyEvent { event ->
                         if (event.key == Key.Enter && (event.isCtrlPressed || event.isMetaPressed)) {
                             if (event.type == KeyEventType.KeyUp && canSend) {
                                 val text = currentDraft
+                                editor = androidx.compose.ui.text.input.TextFieldValue("")
                                 currentOnDraftChange("")
                                 currentOnSend(text)
                             }
@@ -344,25 +382,77 @@ internal fun Composer(
                     // Stop keeps the right-hand position it had, so the gesture for stopping a turn is
                     // where it always was and send appears beside it rather than under the thumb
                     // already reaching for stop.
+                    // The send button lights up as the draft becomes sendable rather than switching
+                    // colour in one frame, and gives a small pop when it does, so the change that
+                    // makes it pressable is noticed without looking for it.
+                    val sendFill by animateColorAsState(
+                        if (canSend) colors.buttonInfoFill else colors.buttonPrimaryDimmed,
+                        DsAnimations.tabSwapColor,
+                        label = "sendFill",
+                    )
+                    val sendTint by animateColorAsState(
+                        if (canSend) Color.White else colors.labelTertiary,
+                        DsAnimations.tabSwapColor,
+                        label = "sendTint",
+                    )
+                    val sendScale by animateFloatAsState(
+                        if (canSend) 1f else 0.92f,
+                        spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+                        label = "sendScale",
+                    )
+                    fun submit(deliver: (String) -> Unit) {
+                        val text = currentDraft
+                        // Cleared here as well as through the draft: the field only follows the
+                        // draft a frame later, and an IME update landing in that frame (the
+                        // keyboard finishing its composing word) carried the sent text back in.
+                        editor = androidx.compose.ui.text.input.TextFieldValue("")
+                        currentOnDraftChange("")
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        deliver(text)
+                    }
+                    // Mid-turn a message can steer the running turn or wait for it to end, and the
+                    // sticky choice lives two taps away in the + sheet. Holding send makes the choice
+                    // for this message alone, the way a hold anywhere else opens what a thing can do.
+                    val sendWith = onSendWith?.takeIf { running && canSend }
                     CircleAction(
                         icon = Icons.Filled.ArrowUpward,
                         description = stringResource(R.string.chat_composer_send),
                         size = 40,
-                        background = if (canSend) colors.buttonInfoFill else colors.buttonPrimaryDimmed,
-                        tint = if (canSend) Color.White else colors.labelTertiary,
+                        background = sendFill,
+                        tint = sendTint,
                         enabled = canSend,
-                        onClick = {
-                            val text = currentDraft
-                            currentOnDraftChange("")
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            currentOnSend(text)
-                        },
+                        modifier = Modifier.graphicsLayer { scaleX = sendScale; scaleY = sendScale },
+                        onClick = { submit { currentOnSend(it) } },
+                        onLongClick = sendWith?.let { { sendMenuOpen = true } },
+                        longClickLabel = stringResource(R.string.hold_send_label),
                     )
+                    // A turn that ends under the open menu takes it away: steering an idle session
+                    // is refused, and queueing is then just a send.
+                    androidx.compose.runtime.LaunchedEffect(sendWith == null) { if (sendWith == null) sendMenuOpen = false }
+                    if (sendMenuOpen && sendWith != null) {
+                        HoldMenu(
+                            onDismiss = { sendMenuOpen = false },
+                            actions = listOf(
+                                HoldAction(
+                                    stringResource(R.string.hold_send_steer),
+                                    Icons.Outlined.Bolt,
+                                    detail = stringResource(R.string.chat_composer_mode_steer_hint),
+                                ) { submit { text -> sendWith(text, "steer") } },
+                                HoldAction(
+                                    stringResource(R.string.hold_send_queue),
+                                    Icons.Outlined.Schedule,
+                                    detail = stringResource(R.string.chat_composer_mode_queue_hint),
+                                ) { submit { text -> sendWith(text, "queue") } },
+                            ),
+                        )
+                    }
 
+                    // Grows its own width in and out, so the controls beside it slide over rather than
+                    // jumping by a button's width the moment a turn starts or ends.
                     AnimatedVisibility(
                         visible = running,
-                        enter = fadeIn(DsAnimations.fade) + scaleIn(initialScale = 0.85f),
-                        exit = fadeOut(DsAnimations.fade) + scaleOut(targetScale = 0.85f),
+                        enter = fadeIn(DsAnimations.fade) + expandHorizontally(DsAnimations.expand) + scaleIn(initialScale = 0.85f),
+                        exit = fadeOut(DsAnimations.fade) + shrinkHorizontally(DsAnimations.expand) + scaleOut(targetScale = 0.85f),
                     ) {
                         CircleAction(
                             icon = null,
@@ -422,6 +512,10 @@ private fun PermissionChip(
             modifier = Modifier
                 .clip(DsShapes.cube)
                 .clickable(enabled = enabled && pending == null) { menuOpen = true }
+                // 24dp of chip was the smallest target in the composer for a setting that decides
+                // whether the agent can run commands unasked.
+                .heightIn(min = 36.dp)
+                .wrapContentHeight(Alignment.CenterVertically)
                 .padding(horizontal = 8.dp, vertical = 4.dp)
                 .then(
                     if (pending != null) {
@@ -614,30 +708,64 @@ private fun CircleAction(
     tint: Color,
     enabled: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** A hold, for the one button with a second thing to offer; null keeps the plain tap. */
+    onLongClick: (() -> Unit)? = null,
+    longClickLabel: String? = null,
     content: (@Composable () -> Unit)? = null,
 ) {
-    Surface(
-        onClick = onClick,
-        // Described here rather than on the icon, because not every one of these has an icon: the
-        // stop button draws a plain square through `content`, and while the description hung off
-        // the icon that button announced nothing at all to a screen reader.
-        modifier = Modifier.size(size.dp).semantics { this.contentDescription = description },
-        enabled = enabled,
-        shape = CircleShape,
-        color = background,
-    ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            when {
-                content != null -> content()
-                icon != null -> Icon(
-                    icon,
-                    // The Surface above already carries it; repeating it here would have a screen
-                    // reader say the label twice.
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size((size * 0.46f).dp),
-                )
-            }
+    val interaction = remember { MutableInteractionSource() }
+    // Described here rather than on the icon, because not every one of these has an icon: the
+    // stop button draws a plain square through `content`, and while the description hung off
+    // the icon that button announced nothing at all to a screen reader.
+    val described = modifier.pressScale(interaction, 0.9f).size(size.dp).semantics { this.contentDescription = description }
+    if (onLongClick == null) {
+        Surface(
+            onClick = onClick,
+            interactionSource = interaction,
+            modifier = described,
+            enabled = enabled,
+            shape = CircleShape,
+            color = background,
+        ) { CircleGlyph(icon, size, tint, content) }
+    } else {
+        // Surface's own onClick has no hold, so the clickable moves onto the modifier, clipped to
+        // the circle so the ripple stays inside it.
+        Surface(
+            modifier = described
+                .clip(CircleShape)
+                .clickableWithHold(
+                    holdLabel = longClickLabel.orEmpty(),
+                    onHold = onLongClick,
+                    enabled = enabled,
+                    role = androidx.compose.ui.semantics.Role.Button,
+                    interactionSource = interaction,
+                    onClick = onClick,
+                ),
+            shape = CircleShape,
+            color = background,
+        ) { CircleGlyph(icon, size, tint, content) }
+    }
+}
+
+@Composable
+private fun CircleGlyph(
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
+    size: Int,
+    tint: Color,
+    content: (@Composable () -> Unit)?,
+) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+        when {
+            content != null -> content()
+            icon != null -> Icon(
+                icon,
+                // The Surface above already carries it; repeating it here would have a screen
+                // reader say the label twice.
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size((size * 0.46f).dp),
+            )
         }
     }
 }

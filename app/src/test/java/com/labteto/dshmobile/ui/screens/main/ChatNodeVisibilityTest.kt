@@ -91,7 +91,8 @@ class ChatNodeVisibilityTest {
         // The compatibility contract keeps genuinely unknown types visible; the noise is named.
         assertFalse(OtherNode(seq = 4, type = "step/start", data = JsonNull).rendersContent())
         assertFalse(OtherNode(seq = 5, type = "assistant/chunk", data = JsonNull).rendersContent())
-        assertFalse(OtherNode(seq = 6, type = "workspace/changes", data = JsonNull).rendersContent())
+        // The turn's settled file changes draw the changed-files card, so this one is content.
+        assertTrue(OtherNode(seq = 6, type = "workspace/changes", data = JsonNull).rendersContent())
         assertTrue(OtherNode(seq = 7, type = "something/new", data = JsonNull).rendersContent())
     }
 

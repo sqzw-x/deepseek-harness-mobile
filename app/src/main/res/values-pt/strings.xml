@@ -109,7 +109,6 @@
     <string name="chat_composer_attach">Anexar imagem</string>
     <string name="chat_composer_remove_image">Remover imagem</string>
     <string name="chat_empty_title">Comece a trabalhar com seu Harness</string>
-    <string name="chat_jump_to_latest">Ir para o mais recente</string>
     <string name="chat_empty_hint">Envie uma mensagem para iniciar um novo turno.</string>
     <string name="chat_load_older">Carregar mensagens anteriores</string>
     <string name="chat_loading_older">Carregando mensagens anteriores…</string>
@@ -601,6 +600,7 @@
     <string name="chat_activity_running_tool">Executando ferramenta</string>
     <string name="chat_tool_group_failed">%1$d falhas</string>
     <string name="chat_thought_process">Raciocínio</string>
+    <string name="chat_process_title">Processo</string>
     <!-- ==== This phone (Termux) ==== -->
     <string name="connect_mode_loopback">Este telefone</string>
     <string name="connect_mode_loopback_hint">Fale com um harness em execução neste telefone: no Termux, ou encaminhado para cá com adb reverse. Nada sai do aparelho e o harness trata o app como local. Ainda assim ele autentica este telefone uma vez.</string>
@@ -636,4 +636,35 @@
     <string name="update_copy_command">Copiar comando de instalação</string>
     <string name="update_install_started">Baixando no Termux. O instalador abre ao terminar.</string>
     <string name="update_install_failed">O Termux não conseguiu instalar a atualização (%1$s).</string>
+    <string name="chat_history_title">Histórico</string>
+    <string name="chat_history_empty">Nenhuma mensagem enviada ainda.</string>
+    <string name="chat_history_no_match">Nenhuma mensagem corresponde.</string>
+    <string name="chat_history_image">Imagem</string>
+    <string name="hold_message_actions">Ações da mensagem</string>
+    <string name="hold_tool_actions">Ações da chamada de ferramenta</string>
+    <string name="hold_file_actions">Ações do arquivo</string>
+    <string name="hold_session_actions">Ações da sessão</string>
+    <string name="hold_workspace_actions">Ações da pasta</string>
+    <string name="hold_select_text">Selecionar texto</string>
+    <string name="hold_copy_all">Copiar tudo</string>
+    <string name="hold_edit_as_new">Editar como nova mensagem</string>
+    <string name="hold_edit_as_new_detail">Coloca no editor. A original continua.</string>
+    <string name="hold_rewind_here">Retroceder para esta mensagem</string>
+    <string name="hold_rewind_here_detail">Retira esta e tudo o que veio depois, e devolve ao editor</string>
+    <string name="hold_copy_command">Copiar comando</string>
+    <string name="hold_copy_path">Copiar caminho</string>
+    <string name="hold_copy_query">Copiar busca</string>
+    <string name="hold_copy_output">Copiar saída</string>
+    <string name="hold_copy_arguments">Copiar argumentos</string>
+    <string name="hold_open_file">Abrir arquivo</string>
+    <string name="hold_mention">Mencionar na mensagem</string>
+    <string name="hold_send_label">Escolher como enviar</string>
+    <string name="hold_send_steer">Direcionar agora</string>
+    <string name="hold_send_queue">Enfileirar após este turno</string>
+    <string name="hold_send_tip">Dica: segure Enviar para escolher em uma única mensagem.</string>
+    <string name="hold_replace_draft_title">Substituir o rascunho?</string>
+    <string name="hold_replace_draft_body">O editor já tem texto. Editar esta mensagem vai substituí-lo.</string>
+    <string name="hold_replace_draft_confirm">Substituir</string>
+    <string name="chatlist_show_all">Mostrar todos %1$d</string>
+    <string name="chatlist_show_less">Mostrar menos</string>
 </resources>
