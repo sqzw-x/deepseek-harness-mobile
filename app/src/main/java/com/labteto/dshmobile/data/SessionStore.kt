@@ -16,6 +16,7 @@ import com.labteto.dshmobile.core.session.EventFold
 import com.labteto.dshmobile.core.session.QueueItem
 import com.labteto.dshmobile.core.session.SessionEventEnvelope
 import com.labteto.dshmobile.core.wire.DshApiClient
+import com.labteto.dshmobile.core.wire.RemoteStreamMux
 import com.labteto.dshmobile.core.wire.RpcResult
 import com.labteto.dshmobile.core.wire.decodeFromJsonElement
 import com.labteto.dshmobile.core.wire.dto.APPROVAL_REQUEST_EVENT
@@ -112,13 +113,16 @@ import java.util.TimeZone
 import com.labteto.dshmobile.core.wire.dto.PermissionCatalog
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -675,8 +679,15 @@ class SessionStore @Inject constructor(
     /** The open session's `job/list` stream (harness 0.1.7). Replaced with the open session. */
     private var jobsJob: Job? = null
 
-    /** Workspace registry stream. One per connection generation. */
+    /** Workspace registry stream: one per generation, reopened when it ends or the drawer asks. */
     private var workspaceJob: Job? = null
+
+    /** Serializes starting that stream, so a drawer open and a baseline cannot both own it. */
+    private val workspaceMutex = Mutex()
+
+    /** Set when a connection asked for a baseline while another one was still running. */
+    @Volatile
+    private var baselineRequested = false
 
     private data class ApprovalRequest(
         val sessionId: String,
@@ -795,13 +806,57 @@ class SessionStore @Inject constructor(
                 }
             }.onFailure { log("session/control ended", it) }
         }
-        workspaceJob?.cancel()
-        workspaceJob = scope.launch {
-            runCatching {
+        openWorkspaceStream(mux)
+    }
+
+    /**
+     * Read the workspace registry again.
+     *
+     * `workspace.list` is gone: the registry is a stream, and every generation of it opens with a
+     * complete baseline. So the list read that keeps the drawer's sessions fresh has no equivalent
+     * for their groups — this is it, and it is what the drawer calls on open. A group the harness
+     * keeps is repaired by the baseline whether the previous stream was healthy or not.
+     */
+    fun refreshWorkspaces() {
+        val mux = connectionManager.generation?.mux ?: return
+        openWorkspaceStream(mux)
+    }
+
+    /** Start (or restart) `workspace/follow` on [mux]; its first item is a complete baseline. */
+    private fun openWorkspaceStream(mux: RemoteStreamMux) {
+        scope.launch {
+            if (!workspaceMutex.tryLock()) return@launch
+            try {
+                workspaceJob?.cancel()
+                workspaceJob = scope.launch { pumpWorkspaceStream(mux) }
+            } finally {
+                workspaceMutex.unlock()
+            }
+        }
+    }
+
+    /**
+     * Keep `workspace/follow` open for as long as [mux] is the current generation.
+     *
+     * The stream used to be opened once and forgotten: a host that ended it, or a frame this app
+     * could not parse, left the registry frozen while `session/list` kept the rows fresh — so a
+     * session registered after that moment had no group to land in and showed up under the
+     * ungrouped heading even though the harness had it in a workspace. Each attempt starts from a
+     * complete baseline, which repairs whatever the gap held, so retrying is the whole recovery.
+     */
+    private suspend fun pumpWorkspaceStream(mux: RemoteStreamMux) {
+        var retryDelay = WORKSPACE_RETRY_MIN_MS
+        while (currentCoroutineContext().isActive && connectionManager.generation?.mux === mux) {
+            val failure = runCatching {
                 mux.openStream("workspace/follow").collect { item ->
-                    decodeOrNull(WorkspaceFollowFrameSerializer, item)?.let { handleWorkspaceFrame(it) }
+                    val frame = decodeOrNull(WorkspaceFollowFrameSerializer, item)
+                    if (frame == null) log("workspace/follow frame not understood") else handleWorkspaceFrame(frame)
                 }
-            }.onFailure { log("workspace/follow ended", it) }
+            }.exceptionOrNull()
+            if (failure is CancellationException) throw failure
+            if (failure != null) log("workspace/follow ended", failure) else log("workspace/follow ended")
+            delay(retryDelay)
+            retryDelay = (retryDelay * 2).coerceAtMost(WORKSPACE_RETRY_MAX_MS)
         }
     }
 
@@ -809,16 +864,33 @@ class SessionStore @Inject constructor(
     private fun <T> decodeOrNull(serializer: kotlinx.serialization.KSerializer<T>, item: JsonElement): T? =
         runCatching { decodeFromJsonElement(serializer, item) }.getOrNull()
 
+    /**
+     * Baseline now, and once more if another generation asked while this one ran.
+     *
+     * A reconnect can land mid-read. Dropping that trigger used to leave the new generation with
+     * no host-wide streams at all: sessions kept arriving through the list read, but
+     * `workspace/follow` never reopened, so grouping silently froze at the registry the previous
+     * generation had. Nothing else reads that registry, so the request is remembered.
+     */
     private fun triggerBaseline() {
         scope.launch {
+            baselineRequested = true
             if (!baselineMutex.tryLock()) return@launch
             try {
-                baseline()
-            } catch (e: Exception) {
-                log("baseline failed", e)
+                while (baselineRequested) {
+                    baselineRequested = false
+                    try {
+                        baseline()
+                    } catch (e: Exception) {
+                        log("baseline failed", e)
+                    }
+                }
             } finally {
                 baselineMutex.unlock()
             }
+            // A trigger that set the flag between that last read and the unlock found the lock
+            // held and returned; take it up again now that it is free.
+            if (baselineRequested) triggerBaseline()
         }
     }
 
@@ -3106,6 +3178,10 @@ class SessionStore @Inject constructor(
         /** Largest file the base64 Remote fallback will carry; anything bigger needs the route. */
         const val MAX_ENCODED_UPLOAD_BYTES = 20L * 1024 * 1024
         const val HISTORY_PAGE_SIZE = 60
+
+        /** Reopen delay for `workspace/follow`, so a closed socket is not retried in a tight loop. */
+        const val WORKSPACE_RETRY_MIN_MS = 1_000L
+        const val WORKSPACE_RETRY_MAX_MS = 30_000L
 
         /** Sessions whose events are kept off-screen; what switching back can paint from. */
         const val MAX_SESSION_CACHES = 6

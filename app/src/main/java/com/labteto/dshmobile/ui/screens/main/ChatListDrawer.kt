@@ -154,6 +154,9 @@ fun ChatListDrawer(
     LaunchedEffect(open, store.activeHostKey) {
         if (!open) return@LaunchedEffect
         store.refreshSessions()
+        // The groups behind these rows come from the workspace stream alone, and it has no list
+        // read behind it — reopening it is the read, and it opens with a complete registry.
+        store.refreshWorkspaces()
         while (true) {
             delay(15_000)
             store.refreshSessions()
