@@ -161,11 +161,13 @@ private enum class DrawerFilter { All, Running, NeedsYou, Archived }
  * but the verbs are all still there.
  *
  * Three orders, one preference ([HostsStore.sessionSort][com.labteto.dshmobile.connection.HostsStore.sessionSort]):
- *  - **Manual** follows the harness's own workspace order under date headings, and a session can be
- *    dragged by its grip to a new place *within its workspace* (the harness cannot move a session
- *    between workspaces). Sessions in no workspace are ordered on the phone.
+ *  - **Manual** follows the harness's own workspace order under date headings. There is no grip to
+ *    drag: on a list this dense a drag and a scroll start the same way, and the drag won often
+ *    enough to be the bug. A row can still be moved within its workspace from its "Move up" and
+ *    "Move down" actions, which are the same commit path a drag took. Sessions in no workspace are
+ *    ordered on the phone.
  *  - **Last updated** is newest first under date headings.
- *  - **By project** groups under collapsible workspace headers, same order inside each, same drag.
+ *  - **By project** groups under collapsible workspace headers, same order inside each.
  */
 @Composable
 fun ChatListDrawer(
@@ -1186,34 +1188,6 @@ private class RowDrag(
 )
 
 /**
- * The grip a row is dragged by.
- *
- * It sits *beside* the row's tap-and-hold area, never inside it, so a tap on the row opens the
- * session, a hold on the row opens its menu, and only the grip can lift the row. It is hidden from
- * the accessibility tree because it has no action a screen reader can take; the row carries "Move
- * up" and "Move down" instead.
- */
-@Composable
-private fun DragHandle(state: ReorderState, onPickUp: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = DsTheme.colors
-    Box(
-        modifier = modifier
-            .width(DsSizes.touchTarget - DsSpacing.small)
-            .heightIn(min = DsSizes.touchTarget)
-            .reorderHandle(state, onPickUp)
-            .clearAndSetSemantics { },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            FeatherIcons.GripVertical,
-            contentDescription = null,
-            tint = colors.labelTertiary,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-/**
  * The one line of explanation shown while something is held: where it is allowed to go.
  *
  * It turns amber-bordered while the finger presses past the edge of that place, which is the moment
@@ -1318,7 +1292,6 @@ private fun ProjectHeader(
             )
             DsPill(text = count.toString())
         }
-        if (drag != null) DragHandle(reorder, drag.onPickUp)
     }
 }
 
@@ -1547,7 +1520,7 @@ private fun SessionRowItem(
                             }
                         }
                     }
-                    .padding(start = DsSpacing.small, end = if (drag != null) 0.dp else DsSpacing.small, top = 10.dp, bottom = 10.dp),
+                    .padding(start = DsSpacing.small, end = DsSpacing.small, top = 10.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -1593,7 +1566,6 @@ private fun SessionRowItem(
                     maxLines = 1,
                 )
             }
-            if (drag != null && reorder != null) DragHandle(reorder, drag.onPickUp)
         }
 
         if (menuOpen) {

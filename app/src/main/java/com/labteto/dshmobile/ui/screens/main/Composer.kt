@@ -300,11 +300,12 @@ internal fun Composer(
                     visualTransformation = remember(references, colors.accent, colors.accentTertiary) {
                         ReferenceTransformation(references, androidx.compose.ui.text.SpanStyle(color = colors.accent, background = colors.accentTertiary))
                     },
-                    // Measure the controls first, then give the editor the remaining height. With
-                    // unbounded height, omit weight so the editor keeps its natural line height.
+                    // The editor is what gives way: the controls are measured first, it takes the
+                    // height left under the composer's cap, and it scrolls its own text past that.
+                    // No height floor here on purpose — a floor would push the action row past the
+                    // card's bottom and clip the buttons, which is the bug this replaced.
                     modifier = Modifier
                         .weight(1f, fill = false)
-                        .heightIn(min = 48.dp)
                         .fillMaxWidth()
                         .focusRequester(fieldFocus)
                         .onFocusChanged { fieldFocused = it.isFocused }

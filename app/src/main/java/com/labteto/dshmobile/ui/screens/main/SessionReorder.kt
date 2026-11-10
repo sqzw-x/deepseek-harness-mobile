@@ -5,7 +5,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
@@ -14,13 +13,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -311,30 +308,6 @@ internal class ReorderState(
         const val BOUNDARY_SLOP_PX = 6f
 
         const val SETTLE_MS = 180
-    }
-}
-
-/**
- * The drag gesture, for a grip handle.
- *
- * [onStart] lifts the unit (it knows the unit's id and block); the rest follows the finger. Drags
- * are immediate rather than after a long press, because the handle exists to be dragged: a press on
- * it can mean nothing else. The pointer input consumes the movement, so the list's own scroll does
- * not also start.
- */
-@Composable
-internal fun Modifier.reorderHandle(state: ReorderState, onStart: () -> Unit): Modifier {
-    val currentStart by rememberUpdatedState(onStart)
-    return pointerInput(state) {
-        detectDragGestures(
-            onDragStart = { currentStart() },
-            onDrag = { change, amount ->
-                change.consume()
-                state.dragBy(amount.y)
-            },
-            onDragEnd = { state.onGestureEnd() },
-            onDragCancel = { state.cancel() },
-        )
     }
 }
 
