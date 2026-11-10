@@ -8,7 +8,6 @@ import android.util.Log
 import com.labteto.dshmobile.connection.ConnectionManager
 import com.labteto.dshmobile.connection.ConnectionPhase
 import com.labteto.dshmobile.connection.HostsStore
-import com.labteto.dshmobile.diag.BackgroundTrace
 import com.labteto.dshmobile.core.session.AssistantLiveState
 import com.labteto.dshmobile.core.session.ChunkRows
 import com.labteto.dshmobile.core.session.ConversationSnapshot
@@ -16,7 +15,6 @@ import com.labteto.dshmobile.core.session.EventFold
 import com.labteto.dshmobile.core.session.QueueItem
 import com.labteto.dshmobile.core.session.SessionEventEnvelope
 import com.labteto.dshmobile.core.wire.DshApiClient
-import com.labteto.dshmobile.core.wire.RemoteStreamMux
 import com.labteto.dshmobile.core.wire.RpcResult
 import com.labteto.dshmobile.core.wire.decodeFromJsonElement
 import com.labteto.dshmobile.core.wire.dto.APPROVAL_REQUEST_EVENT
@@ -56,6 +54,8 @@ import com.labteto.dshmobile.core.wire.dto.RemoteEventFrame
 import com.labteto.dshmobile.core.wire.dto.RemoteEventOutcome
 import com.labteto.dshmobile.core.wire.dto.RemoteEventRejection
 import com.labteto.dshmobile.core.wire.dto.SessionAddress
+import com.labteto.dshmobile.core.wire.dto.ImageAttachmentRef
+import com.labteto.dshmobile.core.wire.dto.LegacySessionAttachmentRequest
 import com.labteto.dshmobile.core.wire.dto.SessionAttachmentRequest
 import com.labteto.dshmobile.core.wire.dto.SessionCancelRequest
 import com.labteto.dshmobile.core.wire.dto.SessionControlFrame
@@ -87,8 +87,6 @@ import com.labteto.dshmobile.core.wire.dto.SessionActivity
 import com.labteto.dshmobile.core.wire.dto.WorkspaceSessionActiveDetails
 import com.labteto.dshmobile.core.wire.dto.jobRowsOf
 import com.labteto.dshmobile.core.wire.dto.subagentEntriesFromCatalog
-import com.labteto.dshmobile.core.wire.dto.subagentModeOf
-import com.labteto.dshmobile.core.wire.dto.sessionAddressFor
 import com.labteto.dshmobile.core.wire.dto.SubagentPromptRequest
 import com.labteto.dshmobile.core.wire.dto.TokenUsageView
 import com.labteto.dshmobile.core.wire.dto.USER_QUESTIONS_REQUEST_EVENT
@@ -98,6 +96,8 @@ import com.labteto.dshmobile.core.wire.dto.WorkspaceCreateRequest
 import com.labteto.dshmobile.core.wire.dto.WorkspaceDeleteRequest
 import com.labteto.dshmobile.core.wire.dto.WorkspaceFollowFrame
 import com.labteto.dshmobile.core.wire.dto.WorkspaceFollowFrameSerializer
+import com.labteto.dshmobile.core.wire.dto.WorkspaceInsertBeforeRequest
+import com.labteto.dshmobile.core.wire.dto.WorkspaceInsertSessionBeforeRequest
 import com.labteto.dshmobile.core.wire.dto.WorkspaceRenameRequest
 import com.labteto.dshmobile.core.wire.dto.WorkspaceValue
 import com.labteto.dshmobile.core.wire.dto.WorkspaceView
@@ -113,16 +113,14 @@ import java.util.TimeZone
 import com.labteto.dshmobile.core.wire.dto.PermissionCatalog
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -131,7 +129,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.io.asInputStream
+import kotlinx.io.asSource
+import kotlinx.io.buffered
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -170,13 +172,12 @@ data class SessionRow(
     val pendingInteraction: String?, // "approval" | "plan-review" | "question" | null
     val formatStatus: String? = null,
     /**
-     * How this child runs — `one-shot` or `continuable` — from its own `subagent` projection.
+     * Durable identity when this row is a subagent child, else null.
      *
-     * Only a child has one. It decides whether the transcript takes new messages, and it is what
-     * the host cross-checks a subagent address against; null means no descriptor has been read
-     * yet, which addresses the child without claiming a mode.
+     * `origin` decides, not `parentSessionId`: a fork records a parent too, and a fork is an
+     * ordinary session. See [subagentIdentityOf].
      */
-    val subagentMode: String? = null,
+    val subagent: SubagentIdentity? = null,
 )
 
 /** One renderable workspace row. */
@@ -310,8 +311,11 @@ private const val AGENT_PRESET_PROJECTION = "agentPreset"
 /** Projection key carrying a parent's direct subagents; `subagents/list` was removed in 0.1.7. */
 private const val SUBAGENT_CATALOG_PROJECTION = "subagentCatalog"
 
-/** Projection key carrying a child session's own descriptor: how it runs, and who spawned it. */
-private const val SUBAGENT_PROJECTION = "subagent"
+/** Projection key saying whether a session has had a prompt; the drawer hides sessions that have not. */
+private const val SESSION_LIST_METADATA_PROJECTION = "sessionListMetadata"
+
+/** The projection keys that change a list row, in the order [SessionStore.foldListProjectionLocked] reads them. */
+private val listProjectionKeys = listOf(SESSION_LIST_METADATA_PROJECTION, "title")
 
 /**
  * What became of an archive request.
@@ -335,13 +339,13 @@ class SessionStore @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context,
     private val connectionManager: ConnectionManager,
     private val hostsStore: HostsStore,
-    private val trace: com.labteto.dshmobile.diag.BackgroundTrace,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
     private val baselineMutex = Mutex()
     private val noCurrentGoalMessage = { context.getString(com.labteto.dshmobile.R.string.goal_none) }
     private val migrationRequiredMessage = { context.getString(com.labteto.dshmobile.R.string.alpha2_migration) }
+    private val subagentReadOnlyMessage = { context.getString(com.labteto.dshmobile.R.string.subagents_readonly) }
     private val featureAvailability = FeatureAvailability { setConnectionError(it.message) }
     val automationAvailable = featureAvailability.state(HarnessFeature.AUTOMATION)
     val pluginManagementAvailable = featureAvailability.state(HarnessFeature.PLUGIN_MANAGEMENT)
@@ -496,14 +500,14 @@ class SessionStore @Inject constructor(
     val subagentMode: StateFlow<String?> = _subagentMode.asStateFlow()
 
     /**
-     * How the open session runs, when the open session is a subagent child: `one-shot`,
-     * `continuable`, or null for an ordinary session.
+     * The open session's identity when that session is a subagent child, else null.
      *
-     * The child's own `subagent` projection answers it — the same descriptor the host checks an
-     * address against — with the session row's copy as the fallback until that projection lands.
+     * The chat needs it for two different reasons: the follow/page address has to travel through
+     * the parent (harness 0.2.2 refuses a plain session address for an `origin: subagent` log),
+     * and only a continuable child accepts a message at all.
      */
-    private val _currentSubagentMode = MutableStateFlow<String?>(null)
-    val currentSubagentMode: StateFlow<String?> = _currentSubagentMode.asStateFlow()
+    private val _currentSubagent = MutableStateFlow<SubagentIdentity?>(null)
+    val currentSubagent: StateFlow<SubagentIdentity?> = _currentSubagent.asStateFlow()
 
     private val _pendingApproval = MutableStateFlow<PendingApproval?>(null)
     val pendingApproval: StateFlow<PendingApproval?> = _pendingApproval.asStateFlow()
@@ -526,9 +530,14 @@ class SessionStore @Inject constructor(
     /** The host's plugin inventory, or null when this deployment does not expose one. */
     val plugins: StateFlow<PluginInventorySnapshot?> = _plugins.asStateFlow()
 
-    /** The preset a switch is in flight for, cleared when the projection reports it as effective. */
-    private val _pendingPermission = MutableStateFlow<String?>(null)
-    val pendingPermission: StateFlow<String?> = _pendingPermission.asStateFlow()
+    /**
+     * The in-flight permission switch. It ends on every path — see [PermissionSwitch] — so the
+     * chip it drives can never be left disabled behind a skeleton.
+     */
+    private val permissionSwitch = PermissionSwitch(scope)
+
+    /** The preset a switch is in flight for; null once it has settled, failed, timed out or been abandoned. */
+    val pendingPermission: StateFlow<String?> = permissionSwitch.pending
 
     // ------------------------------------------------------------------ projection views
     // These are folds of `currentConversation.projections`, not separate fetches: the harness
@@ -553,6 +562,44 @@ class SessionStore @Inject constructor(
         projectionOf(ContextBreakdownView.serializer(), "contextBreakdown")
     val imageLimits: StateFlow<ImageLimitsView?> = projectionOf(ImageLimitsView.serializer(), "imageLimits")
     val planState: StateFlow<PlanStateView?> = projectionOf(PlanStateView.serializer(), "plan")
+
+    private val quotaRepository = com.labteto.dshmobile.core.usage.UsageRepository(System::currentTimeMillis)
+    val quotaStatus = quotaRepository.state
+
+    /** Do not use `models.current`: that view prefers a queued next choice while a turn runs. */
+    fun quotaProvider(): String? = modelSelection.value?.let {
+        if (currentConversation.value?.running == true) it.lastUsed?.provider else (it.next ?: it.lastUsed)?.provider
+    }
+
+    private fun quotaIdentity(): String? {
+        if (connectionManager.state.value.phase != ConnectionPhase.CONNECTED) return null
+        val generation = connectionManager.generation ?: return null
+        val host = connectionManager.state.value.host ?: return null
+        val sid = currentSessionId.value ?: return null
+        return "${host.id}|${host.baseUrl}|${generation.clientId}|$sid|${quotaProvider()}"
+    }
+
+    suspend fun refreshQuota(includeAll: Boolean = false, recheck: Boolean = false) = kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
+        val identity = quotaIdentity()
+        quotaRepository.bind(identity)
+        if (identity == null) return@withContext
+        val api = connectionManager.connectedApi ?: return@withContext
+        val metadata = com.labteto.dshmobile.core.wire.dto.AccountUiMetadata(
+            com.labteto.dshmobile.BuildConfig.VERSION_NAME, java.util.Locale.getDefault().toLanguageTag(),
+            java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000,
+        )
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(60_000) {
+                quotaRepository.refresh(identity, object : com.labteto.dshmobile.core.usage.UsageSource {
+                    override suspend fun status() = (api.subscriptionStatus() as? RpcResult.Ok)?.value
+                    override suspend fun quota(provider: String, account: String) = (api.subscriptionUsage(provider, account) as? RpcResult.Ok)?.value
+                    override suspend fun wallet() = (api.accountBalance(metadata) as? RpcResult.Ok)?.value
+                }, quotaProvider(), includeAll, recheck)
+            }
+        } finally {
+            if (quotaIdentity() != identity) quotaRepository.bind(quotaIdentity())
+        }
+    }
 
     /** This session's durable model choice; the catalog alone no longer carries one. */
     val modelSelection: StateFlow<ModelSelectionProjection?> =
@@ -596,10 +643,39 @@ class SessionStore @Inject constructor(
     private val runningBySession = HashMap<String, Boolean>()
     private val titleBySession = HashMap<String, String>()
 
+    /**
+     * Sessions seen to have had a prompt, learned from pushes about sessions nobody here follows.
+     * A list row built from an older hint must not hide them again; see [effectiveBlank].
+     */
+    private val engagedSessions = HashSet<String>()
+
+    /** Spaces out the fallback list reads that [refreshSessionsIfStale] makes. */
+    private val sessionSyncThrottle = RefreshThrottle(SESSION_SYNC_MIN_INTERVAL_MS)
+
     /** The newest agent preset seen per session, from either the list or the control stream. */
     private val presetBySession = HashMap<String, AgentPresetState>()
     private val workspaceRows = LinkedHashMap<String, WorkspaceRow>()
     private val workspaceOrder = ArrayList<String>()
+
+    /**
+     * Orders the reader asked for that the host has not confirmed yet, laid over what it last said.
+     *
+     * A move shows at once and is sent after; until the host answers, a stream frame carrying the old
+     * order must not flick the list back, which is why these sit beside the host's rows rather than
+     * replacing them. They are dropped when the answer lands (the host's own order is then the truth)
+     * or when a move fails (which is the rollback).
+     */
+    private val pendingSessionOrder = HashMap<String, List<String>>()
+    private var pendingWorkspaceOrder: List<String>? = null
+
+    /** How many moves are waiting or in flight, per workspace (or [WORKSPACE_ORDER_KEY]). */
+    private val movesInFlight = HashMap<String, Int>()
+
+    /** Bumped when a move fails and the overlays are thrown away, so queued moves know to stand down. */
+    private var moveEpoch = 0
+
+    /** One move at a time reaches the host, in the order they were made. */
+    private val moveMutex = Mutex()
     private var archived = emptySet<String>()
     private val pendingKinds = HashMap<String, MutableSet<String>>()
     private var modernQuestionKinds: Map<String, Set<String>> = emptyMap()
@@ -612,6 +688,13 @@ class SessionStore @Inject constructor(
 
     // Open-session fold state.
     private var currentId: String? = null
+    /**
+     * Identity of the open session when it is a subagent child, mirroring [currentSubagent].
+     *
+     * Held next to the fold because the address is built on every follow reconnect, and the
+     * state flow is the UI's view of the same fact — one read from the wire is stored once.
+     */
+    private var openSubagent: SubagentIdentity? = null
     private val currentEvents = ArrayList<SessionEventEnvelope>()
     private var currentHasMore = false
     private var currentBlank = true
@@ -628,15 +711,6 @@ class SessionStore @Inject constructor(
     private var followCursor: Int? = null
 
     /**
-     * The address the open journal is read through, held with the cursor it belongs to.
-     *
-     * A subagent child is only readable through its parent, so paging back has to carry the same
-     * address the stream opened with. Re-derived from the list row on every open, and null before
-     * one; [loadOlder] falls back to the row it has.
-     */
-    private var followAddress: SessionAddress? = null
-
-    /**
      * The reply being written in the open session, as the follow stream's assistant frames show
      * it. Harness 0.1.3 logs no deltas, so this is the only source of a streaming preview; it is
      * folded after the durable window and retired by the settlement. Guarded by [lock].
@@ -645,32 +719,6 @@ class SessionStore @Inject constructor(
 
     /** The open session's live journal. Cancelled and replaced whenever the open session changes. */
     private var followJob: Job? = null
-
-    /**
-     * Recent events of sessions that are not the one on screen, by session id.
-     *
-     * Two things fill one of these: stashing the open session when the reader switches away, and
-     * a background `session/follow` for a session the host calls running — the only kind that can
-     * produce events while nobody is looking. A cache is what lets switching back paint before
-     * the network answers, and for a running session what it paints is already current.
-     */
-    private val sessionCaches = LinkedHashMap<String, SessionCache>()
-
-    // Where a session switch spends its time, split at the publish: everything before it is the
-    // fold on a background thread, everything after is composition and layout on the main one.
-    // The two need different fixes, and from the outside they look like the same one-second wait.
-    @Volatile private var switchTapAt = 0L
-    @Volatile private var switchPublishedAt = 0L
-    @Volatile private var switchEvents = 0
-    @Volatile private var switchCached = false
-
-    private class SessionCache(val sessionId: String) {
-        val events = ArrayDeque<SessionEventEnvelope>()
-        /** The log cut this cache is current to; also what paging backwards pins to. */
-        var cursor: Int = -1
-        /** The background stream feeding it, or null when it is only being remembered. */
-        var job: Job? = null
-    }
     private var childFollowJob: Job? = null
 
     /** Host-wide live control (queue, jobs, projections). One per connection generation. */
@@ -679,15 +727,8 @@ class SessionStore @Inject constructor(
     /** The open session's `job/list` stream (harness 0.1.7). Replaced with the open session. */
     private var jobsJob: Job? = null
 
-    /** Workspace registry stream: one per generation, reopened when it ends or the drawer asks. */
+    /** Workspace registry stream. One per connection generation. */
     private var workspaceJob: Job? = null
-
-    /** Serializes starting that stream, so a drawer open and a baseline cannot both own it. */
-    private val workspaceMutex = Mutex()
-
-    /** Set when a connection asked for a baseline while another one was still running. */
-    @Volatile
-    private var baselineRequested = false
 
     private data class ApprovalRequest(
         val sessionId: String,
@@ -709,6 +750,10 @@ class SessionStore @Inject constructor(
                 }
             }
         }
+        scope.launch(Dispatchers.Main.immediate) {
+            combine(connectionManager.state, currentSessionId, modelSelection, currentConversation) { _, _, _, _ -> quotaIdentity() }
+                .collect { quotaRepository.bind(it) }
+        }
         observeConnection()
         observeEvents()
         observePermissionSettlement()
@@ -716,15 +761,12 @@ class SessionStore @Inject constructor(
     }
 
     /**
-     * Clear the optimistic permission value once the harness's own projection agrees with it. The
-     * chip shows the target immediately and stops pretending as soon as the truth arrives.
+     * Tell the permission switch what the harness's own projection says. The chip shows the target
+     * immediately and stops pretending as soon as the truth arrives — whatever the truth is.
      */
     private fun observePermissionSettlement() {
         scope.launch {
-            permissions.collect { select ->
-                val pending = _pendingPermission.value ?: return@collect
-                if (select?.currentValue == pending) _pendingPermission.value = null
-            }
+            permissions.collect { select -> permissionSwitch.observe(select?.currentValue) }
         }
     }
 
@@ -768,6 +810,9 @@ class SessionStore @Inject constructor(
                     prev.phase == ConnectionPhase.RECONNECTING &&
                     state.phase == ConnectionPhase.CONNECTED
                 prev = state
+                // A switch in flight when the socket drops can no longer be confirmed by a frame
+                // on that socket, and the reconnect's baseline replaces the projection wholesale.
+                if (state.phase != ConnectionPhase.CONNECTED) permissionSwitch.reset()
                 if (initialConnect || reconnect) {
                     probeFeatures()
                     triggerBaseline()
@@ -806,57 +851,13 @@ class SessionStore @Inject constructor(
                 }
             }.onFailure { log("session/control ended", it) }
         }
-        openWorkspaceStream(mux)
-    }
-
-    /**
-     * Read the workspace registry again.
-     *
-     * `workspace.list` is gone: the registry is a stream, and every generation of it opens with a
-     * complete baseline. So the list read that keeps the drawer's sessions fresh has no equivalent
-     * for their groups — this is it, and it is what the drawer calls on open. A group the harness
-     * keeps is repaired by the baseline whether the previous stream was healthy or not.
-     */
-    fun refreshWorkspaces() {
-        val mux = connectionManager.generation?.mux ?: return
-        openWorkspaceStream(mux)
-    }
-
-    /** Start (or restart) `workspace/follow` on [mux]; its first item is a complete baseline. */
-    private fun openWorkspaceStream(mux: RemoteStreamMux) {
-        scope.launch {
-            if (!workspaceMutex.tryLock()) return@launch
-            try {
-                workspaceJob?.cancel()
-                workspaceJob = scope.launch { pumpWorkspaceStream(mux) }
-            } finally {
-                workspaceMutex.unlock()
-            }
-        }
-    }
-
-    /**
-     * Keep `workspace/follow` open for as long as [mux] is the current generation.
-     *
-     * The stream used to be opened once and forgotten: a host that ended it, or a frame this app
-     * could not parse, left the registry frozen while `session/list` kept the rows fresh — so a
-     * session registered after that moment had no group to land in and showed up under the
-     * ungrouped heading even though the harness had it in a workspace. Each attempt starts from a
-     * complete baseline, which repairs whatever the gap held, so retrying is the whole recovery.
-     */
-    private suspend fun pumpWorkspaceStream(mux: RemoteStreamMux) {
-        var retryDelay = WORKSPACE_RETRY_MIN_MS
-        while (currentCoroutineContext().isActive && connectionManager.generation?.mux === mux) {
-            val failure = runCatching {
+        workspaceJob?.cancel()
+        workspaceJob = scope.launch {
+            runCatching {
                 mux.openStream("workspace/follow").collect { item ->
-                    val frame = decodeOrNull(WorkspaceFollowFrameSerializer, item)
-                    if (frame == null) log("workspace/follow frame not understood") else handleWorkspaceFrame(frame)
+                    decodeOrNull(WorkspaceFollowFrameSerializer, item)?.let { handleWorkspaceFrame(it) }
                 }
-            }.exceptionOrNull()
-            if (failure is CancellationException) throw failure
-            if (failure != null) log("workspace/follow ended", failure) else log("workspace/follow ended")
-            delay(retryDelay)
-            retryDelay = (retryDelay * 2).coerceAtMost(WORKSPACE_RETRY_MAX_MS)
+            }.onFailure { log("workspace/follow ended", it) }
         }
     }
 
@@ -864,33 +865,16 @@ class SessionStore @Inject constructor(
     private fun <T> decodeOrNull(serializer: kotlinx.serialization.KSerializer<T>, item: JsonElement): T? =
         runCatching { decodeFromJsonElement(serializer, item) }.getOrNull()
 
-    /**
-     * Baseline now, and once more if another generation asked while this one ran.
-     *
-     * A reconnect can land mid-read. Dropping that trigger used to leave the new generation with
-     * no host-wide streams at all: sessions kept arriving through the list read, but
-     * `workspace/follow` never reopened, so grouping silently froze at the registry the previous
-     * generation had. Nothing else reads that registry, so the request is remembered.
-     */
     private fun triggerBaseline() {
         scope.launch {
-            baselineRequested = true
             if (!baselineMutex.tryLock()) return@launch
             try {
-                while (baselineRequested) {
-                    baselineRequested = false
-                    try {
-                        baseline()
-                    } catch (e: Exception) {
-                        log("baseline failed", e)
-                    }
-                }
+                baseline()
+            } catch (e: Exception) {
+                log("baseline failed", e)
             } finally {
                 baselineMutex.unlock()
             }
-            // A trigger that set the flag between that last read and the unlock found the lock
-            // held and returned; take it up again now that it is free.
-            if (baselineRequested) triggerBaseline()
         }
     }
 
@@ -924,8 +908,6 @@ class SessionStore @Inject constructor(
                 ?: return@coroutineScope
             openSession(sid)
             if (reveal != null) _pendingReveal.compareAndSet(reveal, null)
-            // Every background stream died with the generation that carried it.
-            restartWatchers()
         }
     }
 
@@ -955,19 +937,6 @@ class SessionStore @Inject constructor(
     /** Full endpoint identity: sessions behind different proxy roots belong to different hosts. */
     private fun hostKey(): String? =
         connectionManager.state.value.host?.baseUrl
-
-    /**
-     * The durable address one session is read through, from the list row that describes it.
-     *
-     * A subagent child cannot be opened by id: the host refuses it because a cold read verifies
-     * durable ownership through the parent. The row says both things that decision needs — `origin`
-     * (a fork also records a parent, and a fork is its own session) and the child's own mode, which
-     * the host cross-checks and which may not have arrived yet.
-     */
-    private fun addressForLocked(sessionId: String): SessionAddress {
-        val row = sessionRows[sessionId]
-        return sessionAddressFor(sessionId, row?.origin, row?.parentSessionId, row?.subagentMode)
-    }
 
     // ------------------------------------------------------------------ host event frames
     /**
@@ -1133,6 +1102,13 @@ class SessionStore @Inject constructor(
                         (block["values"] as? JsonObject)?.get("inbox")?.let { questionSessions.inbox(sessionId, it) }
                         val value = (block["values"] as? JsonObject)?.get(AGENT_PRESET_PROJECTION)
                         if (foldAgentPresetLocked(sessionId, asOf, value)) changed = true
+                        // A cached or migration-required block holds hints, not the host's word.
+                        if (block["kind"]?.jsonPrimitive?.contentOrNull !in setOf("cached", "migration-required")) {
+                            val values = block["values"] as? JsonObject
+                            for (key in listProjectionKeys) {
+                                if (foldListProjectionLocked(sessionId, key, values?.get(key))) changed = true
+                            }
+                        }
                     }
                     if (changed) emitSessionsLocked()
                 }
@@ -1144,24 +1120,43 @@ class SessionStore @Inject constructor(
             is SessionControlFrame.Queue -> applyQueue(frame.sessionId, frame.items)
             is SessionControlFrame.Jobs -> applyJobs(frame.sessionId, frame.jobs)
             is SessionControlFrame.Projection -> {
-                if (frame.key == "userQuestions") questionSessions.projection(frame.sessionId, frame.seq, frame.value)
-                if (frame.key == "inbox") questionSessions.inbox(frame.sessionId, frame.value)
-                // The inbox projection is the queue now, and it arrives for every live session —
-                // not just the open one — so the chat list's per-session dock reads it here.
-                if (frame.key == INBOX_PROJECTION) {
-                    val items = InboxProjection.itemsFrom(frame.value).map(::queuedInboxItemToQueueItem)
-                    queuesBySession.value = queuesBySession.value + (frame.sessionId to items)
+                // Harness 0.2.2 folds projections per committed event and names every key the
+                // event touched in one frame; through 0.2.1 a frame carried exactly one key. The
+                // decoder normalizes both to `changes`, so each entry applies with the semantics
+                // this branch used to give "the key".
+                for (change in frame.changes) {
+                    if (change.key == "userQuestions") questionSessions.projection(frame.sessionId, frame.seq, change.value)
+                    if (change.key == "inbox") questionSessions.inbox(frame.sessionId, change.value)
+                    // The inbox projection is the queue now, and it arrives for every live session —
+                    // not just the open one — so the chat list's per-session dock reads it here.
+                    if (change.key == INBOX_PROJECTION) {
+                        val items = InboxProjection.itemsFrom(change.value).map(::queuedInboxItemToQueueItem)
+                        queuesBySession.value = queuesBySession.value + (frame.sessionId to items)
+                    }
                 }
                 synchronized(lock) {
-                    // Another client (the web GUI) can pick a preset after our list read, and the
-                    // list row is what the top-bar chip and the details pill draw from.
-                    if (frame.key == AGENT_PRESET_PROJECTION &&
-                        foldAgentPresetLocked(frame.sessionId, frame.seq, frame.value)
-                    ) {
-                        emitSessionsLocked()
+                    var presetChanged = false
+                    for (change in frame.changes) {
+                        // Another client (the web GUI) can pick a preset after our list read, and
+                        // the list row is what the top-bar chip and the details pill draw from.
+                        if (change.key == AGENT_PRESET_PROJECTION &&
+                            foldAgentPresetLocked(frame.sessionId, frame.seq, change.value)
+                        ) {
+                            presetChanged = true
+                        }
+                        // The first prompt and a rename made elsewhere reach a session nobody here
+                        // follows only through this frame; the drawer hides it until they land.
+                        if (foldListProjectionLocked(frame.sessionId, change.key, change.value)) {
+                            presetChanged = true
+                        }
                     }
-                    if (frame.sessionId == currentId) {
-                        mergeProjectionLocked(frame.key, frame.seq, frame.value)
+                    if (presetChanged) emitSessionsLocked()
+                    if (frame.changes.isNotEmpty() && frame.sessionId == currentId) {
+                        // One rebuild per frame rather than per changed key: the frame is the
+                        // unit the host committed, and folding a long transcript is not free.
+                        for (change in frame.changes) {
+                            mergeProjectionLocked(change.key, frame.seq, change.value)
+                        }
                         rebuildCurrentLocked()
                     }
                 }
@@ -1287,9 +1282,6 @@ class SessionStore @Inject constructor(
      * a notification or a list read.
      */
     private fun handleSessionEvent(sessionId: String, envelope: SessionEventEnvelope) {
-        // The open session's follow stream, recorded separately from `$events`: silence here but
-        // traffic there means the socket is healthy and the host is simply not notifying.
-        trace.record(com.labteto.dshmobile.diag.BackgroundTrace.Kind.SESSION, envelope.type)
         when (envelope.type) {
             "turn/start" -> {
                 setRunning(sessionId, true)
@@ -1394,21 +1386,27 @@ class SessionStore @Inject constructor(
             val existing = sessionRows[item.sessionId]
             val title = titleBySession[item.sessionId]
             val preset = listedAgentPresetLocked(item)
+            // `session-added` may carry less than the list read did, so a row that already knows
+            // its identity keeps it instead of being wiped by a frame without projections.
+            val subagent = subagentIdentityOf(
+                item.origin,
+                item.parentSessionId,
+                item.projections?.values?.get(SUBAGENT_IDENTITY_PROJECTION),
+            ) ?: existing?.subagent
             val row = existing?.copy(
                 title = title ?: existing.title,
-                blank = item.blank,
+                blank = effectiveBlank(item.blank, item.sessionId in engagedSessions),
                 parentSessionId = item.parentSessionId,
                 origin = item.origin,
                 cwd = item.cwd,
                 agentPreset = preset,
                 formatStatus = item.formatStatus,
-                subagentMode = subagentModeOf(item.projections?.values?.get(SUBAGENT_PROJECTION))
-                    ?: existing.subagentMode,
+                subagent = subagent,
             ) ?: SessionRow(
                 sessionId = item.sessionId,
                 title = title,
                 running = runningBySession[item.sessionId] ?: item.running,
-                blank = item.blank,
+                blank = effectiveBlank(item.blank, item.sessionId in engagedSessions),
                 parentSessionId = item.parentSessionId,
                 origin = item.origin,
                 cwd = item.cwd,
@@ -1416,7 +1414,7 @@ class SessionStore @Inject constructor(
                 updatedAt = item.updatedAt,
                 pendingInteraction = null,
                 formatStatus = item.formatStatus,
-                subagentMode = subagentModeOf(item.projections?.values?.get(SUBAGENT_PROJECTION)),
+                subagent = subagent,
             )
             if (existing == null) {
                 // New sessions appear at the front (most recent first).
@@ -1438,6 +1436,7 @@ class SessionStore @Inject constructor(
             sessionRows.remove(sessionId)
             pendingKinds.remove(sessionId)
             runningBySession.remove(sessionId)
+            engagedSessions.remove(sessionId)
             presetBySession.remove(sessionId)
             questionEvents.discard(sessionId)
             emitSessionsLocked()
@@ -1448,27 +1447,31 @@ class SessionStore @Inject constructor(
         synchronized(lock) {
             runningBySession[sessionId] = running
             sessionRows[sessionId]?.let { if (it.running != running) sessionRows[sessionId] = it.copy(running = running) }
+            // A session that is running has been prompted, whether or not the prompt was ours.
+            if (running) markEngagedLocked(sessionId)
             if (sessionId == currentId) rebuildCurrentLocked()
             // A child's own status is what says whether it is running; the catalog only lists it.
             else publishCatalogSubagentsLocked()
             emitSessionsLocked()
         }
-        // Running is the only state that can produce events with nobody looking, so it is the
-        // only one worth a background stream; the cache outlives the stream either way.
-        if (running) startWatcher(sessionId) else stopWatcher(sessionId)
     }
 
     /** Reorder one session on a durable user message, without touching anything else about it. */
     private fun setUpdatedAt(sessionId: String, updatedAt: Long) {
         synchronized(lock) {
+            // The host stamps activity only for a user's durable message, so it also means the
+            // session is no longer blank. Without this a session created on the desktop stayed
+            // hidden here after its first message, because only the open session ever heard that.
+            engagedSessions.add(sessionId)
             val row = sessionRows[sessionId] ?: return@synchronized
-            sessionRows[sessionId] = row.copy(updatedAt = updatedAt)
+            sessionRows[sessionId] = row.copy(updatedAt = updatedAt).engaged()
             emitSessionsLocked()
         }
     }
 
     private fun setBlank(sessionId: String, blank: Boolean) {
         synchronized(lock) {
+            if (!blank) engagedSessions.add(sessionId)
             sessionRows[sessionId]?.let { if (it.blank != blank) sessionRows[sessionId] = it.copy(blank = blank) }
             if (sessionId == currentId) currentBlank = blank
             emitSessionsLocked()
@@ -1564,7 +1567,36 @@ class SessionStore @Inject constructor(
             currentId?.let { sid ->
                 if (key == "userQuestions") questionSessions.projection(sid, seq, value)
                 if (key == "inbox") questionSessions.inbox(sid, value)
+                if (key == SUBAGENT_IDENTITY_PROJECTION) refreshOpenSubagentLocked(sid)
             }
+        }
+    }
+
+    /**
+     * Fold the open child's own identity projection into the address state.
+     *
+     * The list row normally carries the mode already, but it is optional and may predate the
+     * descriptor. The follow snapshot's projections are the child's own log, so this is where an
+     * `unknown` mode becomes the real one — which is what lets the composer turn on for a
+     * continuable child and stays read-only for a one-shot one.
+     */
+    private fun refreshOpenSubagentLocked(sessionId: String) {
+        val row = sessionRows[sessionId]
+        val origin = when {
+            row?.origin != null -> row.origin
+            // A row that arrived before the list read may not carry `origin` yet; the state we
+            // already hold says this session was opened as a child, so keep refining it.
+            openSubagent != null -> SUBAGENT_ORIGIN
+            else -> null
+        }
+        val identity = subagentIdentityOf(
+            origin = origin,
+            parentSessionId = openSubagent?.parentSessionId ?: row?.parentSessionId,
+            projection = currentProjections[SUBAGENT_IDENTITY_PROJECTION]?.value,
+        ) ?: return
+        if (identity != openSubagent) {
+            openSubagent = identity
+            _currentSubagent.value = identity
         }
     }
 
@@ -1593,23 +1625,6 @@ class SessionStore @Inject constructor(
         questionSessions.restoreSettled(merged)
         _currentConversation.value = merged
         publishCatalogSubagentsLocked()
-        publishCurrentSubagentModeLocked()
-    }
-
-    /**
-     * Say whether the open session is a child, and how it runs, from its own descriptor.
-     *
-     * The projection is authoritative once it has landed; the list row stands in until then, and
-     * for a child whose descriptor this build cannot read. An ordinary session clears it.
-     */
-    private fun publishCurrentSubagentModeLocked() {
-        val row = currentId?.let { sessionRows[it] }
-        val mode = if (row?.origin == "subagent") {
-            subagentModeOf(currentProjections[SUBAGENT_PROJECTION]?.value) ?: row.subagentMode
-        } else {
-            null
-        }
-        if (_currentSubagentMode.value != mode) _currentSubagentMode.value = mode
     }
 
     /**
@@ -1633,14 +1648,16 @@ class SessionStore @Inject constructor(
             ))
         }
         _sessions.value = rows
-        // The open child's mode rides the list too: a refresh can be the first thing to learn it.
-        publishCurrentSubagentModeLocked()
     }
 
     private fun emitWorkspacesLocked() {
-        val ordered = workspaceOrder.mapNotNull { workspaceRows[it] } +
-            workspaceRows.values.filter { it.workspaceId !in workspaceOrder }
-        _workspaces.value = ordered
+        val order = pendingWorkspaceOrder?.let { applySavedOrder(workspaceOrder, it) } ?: workspaceOrder
+        val ordered = order.mapNotNull { workspaceRows[it] } +
+            workspaceRows.values.filter { it.workspaceId !in order }
+        _workspaces.value = ordered.map { row ->
+            val pending = pendingSessionOrder[row.workspaceId] ?: return@map row
+            row.copy(sessionIds = applySavedOrder(row.sessionIds, pending))
+        }
     }
 
     private fun pendingInteractionOf(kinds: Set<String>?): String? {
@@ -1662,32 +1679,72 @@ class SessionStore @Inject constructor(
         if (pendingKinds[sessionId].isNullOrEmpty()) pendingKinds.remove(sessionId)
     }
 
-    private fun extractTitle(block: SessionProjectionsBlock?): String? {
-        val value = block?.values?.get("title") ?: return null
-        return when (value) {
-            is JsonPrimitive -> value.contentOrNull
-            is JsonObject -> value["title"]?.jsonPrimitive?.contentOrNull
-            else -> null
+    private fun extractTitle(block: SessionProjectionsBlock?): String? = titleOf(block?.values?.get("title"))
+
+    /**
+     * Fold what a projection value says about a session's list row: it has had a prompt, or it was
+     * renamed. Applies to any session, not just the open one, because the control stream carries
+     * these for every live session and the drawer shows all of them.
+     */
+    private fun foldListProjectionLocked(sessionId: String, key: String, value: JsonElement?): Boolean {
+        when (key) {
+            SESSION_LIST_METADATA_PROJECTION -> {
+                if (listMetadataBlank(value) == false) return markEngagedLocked(sessionId)
+            }
+            "title" -> {
+                val title = titleOf(value)?.takeIf { it.isNotBlank() } ?: return false
+                if (titleBySession[sessionId] == title) return false
+                titleBySession[sessionId] = title
+                val row = sessionRows[sessionId] ?: return false
+                if (row.title == title) return false
+                sessionRows[sessionId] = row.copy(title = title)
+                return true
+            }
         }
+        return false
+    }
+
+    /** The session is known to have had a prompt: remember it and show its row. Returns whether the row changed. */
+    private fun markEngagedLocked(sessionId: String): Boolean {
+        engagedSessions.add(sessionId)
+        val row = sessionRows[sessionId] ?: return false
+        if (!row.blank) return false
+        sessionRows[sessionId] = row.engaged()
+        return true
     }
 
     // ------------------------------------------------------------------ public RPC surface
-    suspend fun refreshSessions() {
-        val api = apiOrNull() ?: return
-        when (val r = api.sessionList(null)) {
+    /**
+     * Read the session list from the host and replace the mirror with it.
+     *
+     * [quiet] is for reads nobody asked for, the fallback in [refreshSessionsIfStale]: a failure is
+     * logged instead of shown, because a red banner over a chat for a poll the reader never made
+     * is worse than a drawer that is a few seconds behind.
+     *
+     * The result is returned for the surfaces that asked in person — the drawer's pull-to-refresh —
+     * so they can say what happened instead of leaving the banner behind them to do it.
+     */
+    suspend fun refreshSessions(quiet: Boolean = false): SessionListRefresh {
+        val api = apiOrNull() ?: return SessionListRefresh.Failed()
+        return when (val r = api.sessionList(null)) {
             is RpcResult.Ok -> {
                 clearConnectionError()
                 synchronized(lock) {
                     sessionRows.clear()
                     for (item in r.value.items) {
-                        val title = titleBySession[item.sessionId]
-                            ?: extractTitle(item.projections)?.also { titleBySession[item.sessionId] = it }
+                        // A sequenced list row is the host's current title, so a rename made on
+                        // the desktop replaces the one held here; a cached hint never does.
+                        val title = listedTitle(
+                            held = titleBySession[item.sessionId],
+                            listed = extractTitle(item.projections),
+                            listedIsCurrent = item.projections?.kind != "cached",
+                        )?.also { titleBySession[item.sessionId] = it }
                         runningBySession.putIfAbsent(item.sessionId, item.running)
                         sessionRows[item.sessionId] = SessionRow(
                             sessionId = item.sessionId,
                             title = title,
                             running = runningBySession[item.sessionId] ?: item.running,
-                            blank = item.blank,
+                            blank = effectiveBlank(item.blank, item.sessionId in engagedSessions),
                             parentSessionId = item.parentSessionId,
                             origin = item.origin,
                             cwd = item.cwd,
@@ -1695,13 +1752,41 @@ class SessionStore @Inject constructor(
                             updatedAt = item.updatedAt,
                             pendingInteraction = null,
                             formatStatus = item.formatStatus,
-                            subagentMode = subagentModeOf(item.projections?.values?.get(SUBAGENT_PROJECTION)),
+                            subagent = subagentIdentityOf(
+                                item.origin,
+                                item.parentSessionId,
+                                item.projections?.values?.get(SUBAGENT_IDENTITY_PROJECTION),
+                            ),
                         )
                     }
+                    // A session the host no longer lists has nothing left to remember.
+                    engagedSessions.retainAll(sessionRows.keys)
                     emitSessionsLocked()
                 }
+                SessionListRefresh.Done
             }
-            is RpcResult.Err -> setConnectionError(r.error.message)
+            is RpcResult.Err -> {
+                if (quiet) log("background session list failed: ${r.error.message}") else setConnectionError(r.error.message)
+                SessionListRefresh.Failed(r.error.message)
+            }
+        }
+    }
+
+    /**
+     * The fallback that keeps the drawer honest: re-read the session list unless one was read a
+     * moment ago or is still running.
+     *
+     * The pushes ([handleNotification], [handleControlFrame]) carry most of what changes, but a
+     * push is never replayed after a gap and a few changes have none, so the drawer asks again
+     * when it opens, when the app returns to the foreground, and now and then while it stays open.
+     * [force] skips the spacing for a trigger that must not be swallowed, never the single flight.
+     */
+    suspend fun refreshSessionsIfStale(force: Boolean = false) {
+        if (!sessionSyncThrottle.begin(force)) return
+        try {
+            refreshSessions(quiet = true)
+        } finally {
+            sessionSyncThrottle.end()
         }
     }
 
@@ -1716,31 +1801,6 @@ class SessionStore @Inject constructor(
      * stream's own.
      */
     private fun applyWorkspaceValue(value: WorkspaceValue) = upsertWorkspace(value.workspace)
-
-    /**
-     * The transcript has been laid out, so the wait the reader felt is over.
-     *
-     * Split out from the fold on purpose: recorded as `fold=` (background) and `render=`
-     * (main thread) because a cache hit makes the first number small and can leave the second
-     * untouched, and only the numbers can say which one the reader is still waiting for.
-     */
-    fun markSessionSwitchRendered(rows: Int) {
-        val tapped = switchTapAt
-        val published = switchPublishedAt
-        if (tapped == 0L || published == 0L) return
-        val now = android.os.SystemClock.uptimeMillis()
-        trace.record(
-            BackgroundTrace.Kind.SWITCH,
-            "fold=${published - tapped}ms render=${now - published}ms " +
-                "rows=$rows events=$switchEvents cached=$switchCached " +
-                "pre=" + (com.labteto.dshmobile.diag.RenderStats.firstRowAt()
-                    .takeIf { it > 0 }?.minus(published) ?: -1) + "ms " +
-                com.labteto.dshmobile.diag.RenderStats.rowSummary() + " " +
-                com.labteto.dshmobile.diag.RenderStats.summary(),
-        )
-        switchTapAt = 0L
-        switchPublishedAt = 0L
-    }
 
     /**
      * Show the session a notification pointed at.
@@ -1758,25 +1818,33 @@ class SessionStore @Inject constructor(
         }
     }
 
+    /**
+     * The transcript has been laid out, so the wait the reader felt is over.
+     *
+     * The switch itself is timed by [com.labteto.dshmobile.diag.RenderStats] now; this stays the
+     * hook the transcript calls when its first rows are on screen, so the two sides have one name
+     * for the moment.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun markSessionSwitchRendered(rows: Int) = Unit
+
     suspend fun openSession(sessionId: String) = withContext(Dispatchers.Default) {
-        switchTapAt = android.os.SystemClock.uptimeMillis()
         val api = apiOrNull() ?: return@withContext
         _loadOlderFailed.value = false
-        var wake: String? = null
-        val address: SessionAddress = synchronized(lock) {
-            val resolved = addressForLocked(sessionId)
-            val left = currentId
-            val same = left == sessionId
-            // What is on screen is worth keeping: switching away and back is the common case, and
-            // re-fetching a window the process still holds is pure waiting.
-            if (!same) stashCurrentLocked()
-            val cached = sessionCaches[sessionId]?.also { cache ->
-                // The open session gets a full stream below; a background one for the same
-                // session would deliver every event twice.
-                cache.job?.cancel()
-                cache.job = null
-            }
-            val seeded = cached?.events?.toList().orEmpty()
+        // A target the list read never saw — a search hit, or a session reference that raced the
+        // `session-added` frame — has no row, and a child's creator is only in that row. Without it
+        // the follow would fall back to the plain address this fix exists to avoid. One list read
+        // closes that hole; an ordinary tap already has the row and skips the round trip.
+        if (synchronized(lock) { sessionRows[sessionId] == null }) refreshSessions()
+        val subagent = synchronized(lock) {
+            // The list row is the only place the child's creator is known without reading the
+            // child's own log, and the follow address is built before that read — so it has to be
+            // settled here. A row whose `subagent` projection is absent still produces an identity
+            // with mode `unknown`; the opening snapshot supplies the real mode for the composer.
+            val resolved = openSubagentFor(sessionRows[sessionId])
+            openSubagent = resolved
+            _currentSubagent.value = resolved
+            val same = currentId == sessionId
             currentId = sessionId
             _currentSessionId.value = sessionId
             currentEvents.clear()
@@ -1785,21 +1853,11 @@ class SessionStore @Inject constructor(
             currentProjections.clear()
             currentQueue = emptyList()
             liveAssistant.clear()
-            followCursor = null
-            followAddress = resolved
-            // Before the first snapshot lands, from the row alone: the composer's read-only state
-            // must not wait for the stream, and the stream then corrects it from the descriptor.
-            publishCurrentSubagentModeLocked()
-            if (seeded.isNotEmpty()) {
-                currentEvents.addAll(seeded)
-                currentHasMore = true
-                if (cached != null && cached.cursor >= 0) followCursor = cached.cursor
-                // Painted before the request goes out, and replaced wholesale when the fresh
-                // snapshot lands — the cursor is what makes that replacement lossless.
-                rebuildCurrentLocked()
-            }
+            // Opened again, even the same session: the follow snapshot replaces every projection,
+            // so a switch started against the old ones has nothing left to be confirmed by.
+            permissionSwitch.reset()
             if (!same) {
-                if (seeded.isEmpty()) _currentConversation.value = null
+                _currentConversation.value = null
                 _jobs.value = emptyList()
                 _skills.value = emptyList()
                 _models.value = null
@@ -1807,20 +1865,10 @@ class SessionStore @Inject constructor(
                 _subagentConversation.value = null
                 _subagentMode.value = null
                 _commands.value = emptyList()
-                _pendingPermission.value = null
             }
-            // Read here, acted on below: it is the session being left, and `currentId` no longer
-            // names it by the time the streams are started.
-            wake = if (same) null else left?.takeIf { runningBySession[it] == true }
-            switchEvents = currentEvents.size
-            switchCached = seeded.isNotEmpty()
-            switchPublishedAt = android.os.SystemClock.uptimeMillis()
-            com.labteto.dshmobile.diag.RenderStats.reset()
             resolved
         }
-        // A session that is still running keeps producing after the reader leaves it.
-        wake?.let(::startWatcher)
-        startFollow(sessionId, address)
+        startFollow(sessionId)
         startJobs(sessionId)
         // Everything past the follow stream furnishes the chrome around the transcript — the skill
         // and model pickers, the subagent list, the command catalog — and none of it is needed to
@@ -1831,27 +1879,16 @@ class SessionStore @Inject constructor(
         // `refreshSubagents` and `refreshCommands` read the open session from `currentId`, which
         // was set synchronously above, so they still target this session rather than a stale one.
         coroutineScope {
-            launch { loadSkills(sessionId) }
+            // `skills/list` is an agent-scoped read that resolves the ordinary agent identity, and
+            // a child's is owned by subagent routing; nothing in a child transcript needs it.
+            if (subagent == null) launch { loadSkills(sessionId) }
             launch { loadModels(sessionId) }
             launch { refreshSubagents() }
             launch { refreshCommands() }
-            launch { rememberLastSession(sessionId) }
+            // A child landing would be filtered on the next launch anyway (see InitialSession), so
+            // remembering one here only displaces the session the app would otherwise return to.
+            if (subagent == null) launch { rememberLastSession(sessionId) }
         }
-    }
-
-    /** Named arguments of one `session/follow` opening. */
-    private fun followArgs(address: SessionAddress, maxMessages: Int?, assistantStream: Boolean) = buildJsonObject {
-        put(
-            "request",
-            encodeToJsonElement(
-                SessionFollowRequest.serializer(),
-                SessionFollowRequest(
-                    address = address,
-                    maxMessages = maxMessages,
-                    assistantStream = assistantStream,
-                ),
-            ),
-        )
     }
 
     /**
@@ -1871,20 +1908,28 @@ class SessionStore @Inject constructor(
      * Following does not resume a stopped agent: the host publishes a cold session's prepared
      * snapshot immediately and promotes it in the background, so opening a transcript is an
      * observation rather than an execution.
-     *
-     * [address] is not the session id by another name: a subagent child is readable only through
-     * its durable parent, and the host refuses a plain session address for one.
      */
-    private fun startFollow(sessionId: String, address: SessionAddress) {
+    private fun startFollow(sessionId: String) {
         followJob?.cancel()
         followCursor = null
-        followAddress = address
         val mux = connectionManager.generation?.mux
         if (mux == null) {
             log("cannot follow $sessionId: no connection generation")
             return
         }
-        val args = followArgs(address, HISTORY_PAGE_SIZE, assistantStream = true)
+        val args = buildJsonObject {
+            put(
+                "request",
+                encodeToJsonElement(
+                    SessionFollowRequest.serializer(),
+                    SessionFollowRequest(
+                        address = synchronized(lock) { openSessionAddressLocked(sessionId) },
+                        maxMessages = HISTORY_PAGE_SIZE,
+                        assistantStream = true,
+                    ),
+                ),
+            )
+        }
         followJob = scope.launch {
             runCatching {
                 mux.openStream("session/follow", args).collect { item ->
@@ -1902,6 +1947,21 @@ class SessionStore @Inject constructor(
             }
         }
     }
+
+    /**
+     * The durable address naming the open session's log.
+     *
+     * Harness 0.2.2 validates it against the session header and refuses a plain session address for
+     * a session whose `origin` is `subagent`; the child has to be named through its creator. The
+     * subagent address has been the one protocol for child logs since 0.1.2, so older hosts read
+     * the same request. Only the *open* session can be a child here: the subagent sheet builds its
+     * own address from the catalog, which carries the real mode.
+     */
+    private fun openSessionAddressLocked(sessionId: String): SessionAddress =
+        openSubagent
+            ?.takeIf { currentId == sessionId }
+            ?.let { sessionAddressFor(sessionId, it) }
+            ?: SessionAddress.Session(sessionId = sessionId)
 
     /**
      * Mirror the open session's background jobs from `job/list` (harness 0.1.7).
@@ -1947,14 +2007,20 @@ class SessionStore @Inject constructor(
         }
     }
 
-    /** Stop one background job of the open session. False when the harness refused. */
-    suspend fun killJob(jobId: String): Boolean {
-        val sid = currentSessionId.value ?: return false
-        val api = apiOrNull() ?: return false
+    /** Stop one background job of the open session. Failed when the harness refused. */
+    suspend fun killJob(jobId: String, report: Boolean = true): ActionOutcome<Unit> {
+        val sid = currentSessionId.value ?: return ActionOutcome.Failed()
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
         return when (val r = api.jobKill(sid, jobId)) {
-            is RpcResult.Ok -> true
-            // The row went away first; the next `job/list` frame shows that, so it is not a failure.
-            is RpcResult.Err -> if (r.error.code == "job/not-found") true else { setConnectionError(r.error.message); false }
+            is RpcResult.Ok -> ActionOutcome.Done(Unit)
+            is RpcResult.Err -> when {
+                // The row went away first; the next `job/list` frame shows that, so it is not a failure.
+                r.error.code == "job/not-found" -> ActionOutcome.Done(Unit)
+                else -> {
+                    if (report) setConnectionError(r.error.message)
+                    ActionOutcome.Failed(r.error.message)
+                }
+            }
         }
     }
 
@@ -2002,109 +2068,6 @@ class SessionStore @Inject constructor(
         if (changed) rebuildTicks.trySend(Unit)
     }
 
-    // ------------------------------------------------------------------ background sessions
-    private fun cacheOfLocked(sessionId: String): SessionCache {
-        sessionCaches[sessionId]?.let { return it }
-        val cache = SessionCache(sessionId)
-        sessionCaches[sessionId] = cache
-        while (sessionCaches.size > MAX_SESSION_CACHES) {
-            val victim = sessionCaches.values.firstOrNull { it.sessionId != currentId } ?: break
-            sessionCaches.remove(victim.sessionId)
-            victim.job?.cancel()
-        }
-        return cache
-    }
-
-    /** Keep what the reader was just looking at, so coming back does not start from nothing. */
-    private fun stashCurrentLocked() {
-        val sid = currentId ?: return
-        if (currentEvents.isEmpty()) return
-        val cache = cacheOfLocked(sid)
-        cache.events.clear()
-        cache.events.addAll(currentEvents)
-        followCursor?.let { cache.cursor = it }
-        trimCacheLocked(cache)
-    }
-
-    private fun trimCacheLocked(cache: SessionCache) {
-        while (cache.events.size > MAX_CACHED_EVENTS) cache.events.removeFirst()
-    }
-
-    /** Start watching [sessionId] in the background, if it is not already watched. */
-    private fun startWatcher(sessionId: String) {
-        if (sessionId == currentId) return
-        if (connectionManager.generation?.mux == null) return
-        synchronized(lock) {
-            if (sessionCaches[sessionId]?.job != null) return
-            val cache = cacheOfLocked(sessionId)
-            // A running child is watched through the same parent-addressed route the open view uses.
-            val address = addressForLocked(sessionId)
-            cache.job = scope.launch { watch(cache, address) }
-        }
-    }
-
-    private fun stopWatcher(sessionId: String) {
-        synchronized(lock) {
-            val cache = sessionCaches[sessionId] ?: return
-            cache.job?.cancel()
-            cache.job = null
-        }
-    }
-
-    /** Every background stream died with the generation that carried it; reopen them. */
-    private fun restartWatchers() {
-        val running = synchronized(lock) {
-            sessionCaches.values.forEach { it.job?.cancel(); it.job = null }
-            runningBySession.filterValues { it }.keys.toList()
-        }
-        running.forEach(::startWatcher)
-    }
-
-    /**
-     * Feed one background session's cache from its own `session/follow`.
-     *
-     * Deliberately not sharing the folding path with the open session: this one keeps events, it
-     * does not interpret them. Only when the reader switches here does anything get folded, and
-     * by then the stream that matters has been reopened with the assistant frames this one does
-     * not ask for.
-     */
-    private suspend fun watch(cache: SessionCache, address: SessionAddress) {
-        try {
-            val mux = connectionManager.generation?.mux ?: return
-            mux.openStream(
-                "session/follow",
-                followArgs(address, HISTORY_PAGE_SIZE, assistantStream = false),
-            ).collect { item ->
-                when (val frame = decodeOrNull(SessionFollowFrameSerializer, item)) {
-                    is SessionFollowFrame.Snapshot -> synchronized(lock) {
-                        cache.cursor = frame.cursor
-                        cache.events.clear()
-                        expandRecords(frame.records).forEach { cache.events.addLast(it) }
-                        trimCacheLocked(cache)
-                    }
-
-                    is SessionFollowFrame.Entry -> synchronized(lock) {
-                        val last = cache.events.lastOrNull()?.seq ?: -1L
-                        expandRecords(listOf(frame.record)).forEach {
-                            if (it.seq > last) cache.events.addLast(it)
-                        }
-                        trimCacheLocked(cache)
-                    }
-
-                    // No assistant frames were asked for, and a kind this build does not know is
-                    // the next generation's problem rather than a reason to drop the cache.
-                    else -> Unit
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log("background follow for ${cache.sessionId} ended", e)
-        } finally {
-            synchronized(lock) { if (sessionCaches[cache.sessionId] === cache) cache.job = null }
-        }
-    }
-
     /**
      * History records are plain events since harness 0.1.3, but a 0.1.2 host still packs runs of
      * consecutive assistant deltas into one record. Expanding those back into scalar events is
@@ -2134,8 +2097,8 @@ class SessionStore @Inject constructor(
         val api = apiOrNull() ?: return@withContext
         if (!_loadingOlder.compareAndSet(expect = false, update = true)) return@withContext
         try {
-            val (oldestSeq, cursor, address) = synchronized(lock) {
-                Triple(currentEvents.firstOrNull()?.seq, followCursor, followAddress ?: addressForLocked(sid))
+            val (oldestSeq, cursor) = synchronized(lock) {
+                currentEvents.firstOrNull()?.seq to followCursor
             }
             // A page is pinned to the follow generation's log cut, and there is no page without
             // one. Before the opening snapshot lands there is nothing to pin to, so this waits
@@ -2145,7 +2108,7 @@ class SessionStore @Inject constructor(
                 return@withContext
             }
             val request = SessionPageRequest(
-                address = address,
+                address = synchronized(lock) { openSessionAddressLocked(sid) },
                 throughSeq = cursor,
                 beforeSeq = oldestSeq?.toInt(),
                 maxMessages = HISTORY_PAGE_SIZE,
@@ -2212,19 +2175,40 @@ class SessionStore @Inject constructor(
         }
     }
 
-    suspend fun renameSession(sessionId: String, title: String) {
-        val api = apiOrNull() ?: return
-        when (val r = api.sessionRename(SessionRenameRequest(sessionId, title))) {
-            is RpcResult.Ok -> setTitle(sessionId, r.value.title)
-            is RpcResult.Err -> setConnectionError(r.error.message)
+    /**
+     * Rename one session. [report] raises a refusal on the chat screen's banner; a caller drawn
+     * over the chat, whose banner is hidden, passes false and says the failure itself.
+     */
+    suspend fun renameSession(sessionId: String, title: String, report: Boolean = true): ActionOutcome<Unit> {
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
+        return when (val r = api.sessionRename(SessionRenameRequest(sessionId, title))) {
+            is RpcResult.Ok -> {
+                setTitle(sessionId, r.value.title)
+                ActionOutcome.Done(Unit)
+            }
+            is RpcResult.Err -> {
+                if (report) setConnectionError(r.error.message)
+                ActionOutcome.Failed(r.error.message)
+            }
         }
     }
 
-    suspend fun forkSession(sessionId: String, atSeq: Long? = null) {
-        val api = apiOrNull() ?: return
-        when (val r = api.sessionFork(SessionForkRequest(sessionId, atSeq?.toInt(), allowMigration = false))) {
-            is RpcResult.Ok -> refreshSessions()
-            is RpcResult.Err -> setConnectionError(if (r.error.code == "session/migration-required") migrationRequiredMessage() else r.error.message)
+    /**
+     * Fork one session, optionally cut at [atSeq]. Done carries the new session's id, so the caller
+     * can offer to open it; the list is refreshed first so that id already has a row.
+     */
+    suspend fun forkSession(sessionId: String, atSeq: Long? = null, report: Boolean = true): ActionOutcome<String> {
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
+        return when (val r = api.sessionFork(SessionForkRequest(sessionId, atSeq?.toInt(), allowMigration = false))) {
+            is RpcResult.Ok -> {
+                refreshSessions()
+                ActionOutcome.Done(r.value.sessionId)
+            }
+            is RpcResult.Err -> {
+                val message = if (r.error.code == "session/migration-required") migrationRequiredMessage() else r.error.message
+                if (report) setConnectionError(message)
+                ActionOutcome.Failed(message)
+            }
         }
     }
 
@@ -2235,7 +2219,7 @@ class SessionStore @Inject constructor(
      * `workspace/session-active`, naming the work, and that comes back as [ArchiveOutcome.Busy]
      * for the caller to confirm. Archiving again with [stopActivity] stops the work first.
      */
-    suspend fun archiveSession(sessionId: String, stopActivity: Boolean = false): ArchiveOutcome {
+    suspend fun archiveSession(sessionId: String, stopActivity: Boolean = false, report: Boolean = true): ArchiveOutcome {
         val api = apiOrNull() ?: return ArchiveOutcome.Failed
         val request = WorkspaceArchiveSessionRequest(sessionId, stopActivity = stopActivity.takeIf { it })
         return when (val r = api.workspaceArchiveSession(request)) {
@@ -2251,7 +2235,7 @@ class SessionStore @Inject constructor(
                     }.getOrNull()
                     ArchiveOutcome.Busy(sessionId, details?.activity.orEmpty())
                 } else {
-                    setConnectionError(r.error.message)
+                    if (report) setConnectionError(r.error.message)
                     ArchiveOutcome.Failed
                 }
             }
@@ -2324,7 +2308,7 @@ class SessionStore @Inject constructor(
             ?: return@withContext RpcResult.Err(RpcError("internal", "not connected"))
         val stream = open()
             ?: return@withContext RpcResult.Err(RpcError("internal", "could not read the file"))
-        val streamed = stream.use { api.uploadFileBinary(sid, name, size, it, onProgress) }
+        val streamed = stream.use { api.uploadFileBinary(sid, name, size, it.asSource().buffered(), onProgress) }
         if (streamed !is RpcResult.Err || streamed.error.code != "capability-unavailable") return@withContext streamed
         if (size !in 0..MAX_ENCODED_UPLOAD_BYTES) return@withContext streamed
         log("upload route unavailable; falling back to fileUploads/upload for ${size}B")
@@ -2336,48 +2320,58 @@ class SessionStore @Inject constructor(
         ).also { onProgress(bytes.size.toLong()) }
     }
 
-    /**
-     * Send one human message, to an ordinary session or to the child that is on screen.
-     *
-     * A subagent child is not prompted through `session/prompt`: the host owns that conversation
-     * through subagent routing and refuses the session route. The delivery goes out through
-     * `subagents/prompt` with the durable parent it names, which is also what the desktop client
-     * does when a child is open as a session.
-     */
     private suspend fun promptContent(mode: String, content: List<PromptContentPart>, targetSessionId: String?, targetHost: String?): PromptOutcome {
         val sid = targetSessionId ?: return PromptOutcome.Failed("no open session")
         val api = apiForHost(targetHost) ?: return PromptOutcome.Failed("not connected")
         val safeMode = if (mode == "steer") "steer" else "queue"
         val zone = TimeZone.getDefault().id
-        val address = synchronized(lock) { addressForLocked(sid) }
-        if (address is SessionAddress.Subagent) {
-            // The child's delivery schema carries text and images only; a staged file receipt has
-            // nowhere to go, so it is refused here rather than as a codec failure.
-            if (content.any { it is PromptContentPart.File }) {
-                return PromptOutcome.Rejected(ImageRejection.SUBAGENT_FILE_UNSUPPORTED, "SUBAGENT_FILE_UNSUPPORTED")
-            }
-            val request = SubagentPromptRequest(
-                requestId = newPromptRequestId(),
-                delivery = safeMode,
-                parentSessionId = address.parentSessionId,
-                childSessionId = address.childSessionId,
-                content = content,
-                clientTimeZone = zone,
-            )
-            return when (val r = api.subagentPrompt(request)) {
-                is RpcResult.Ok -> PromptOutcome.Ok
-                // An image bound is refused by the shared attachment store, which answers with its
-                // own `attachment-invalid` whichever route admitted the message.
-                is RpcResult.Err -> if (r.error.code == ATTACHMENT_INVALID || r.error.code == "subagent/attachment-invalid") {
-                    promptRejection(r.error)
-                } else {
-                    // A child refusal (one that is not continuable, a parent that is gone, delivery
-                    // at capacity) is about this message, not the connection, so it does not
-                    // raise the persistent banner.
-                    if (!r.error.code.startsWith("subagent/") && r.error.code != "session/agent-busy") {
-                        setConnectionError(r.error.message)
+        // `session/prompt` resolves the ordinary agent behind the session, and a child's is owned
+        // by subagent routing — the host refuses it outright. Delivery goes through
+        // `subagents/prompt`, whose request still names the creator and the exact mode.
+        val target = promptTargetFor(
+            synchronized(lock) {
+                if (currentId == sid) openSubagent else sessionRows[sid]?.subagent
+            },
+        )
+        when (target) {
+            is PromptTarget.Ordinary -> Unit
+            is PromptTarget.ReadOnly -> return PromptOutcome.Failed(subagentReadOnlyMessage())
+            is PromptTarget.Child -> {
+                // `subagents/prompt` has no file part at all — the delivery endpoint's content
+                // union is text | image. Pre-empting that here is what the web client does too, and
+                // it keeps the composer's staged files (a Rejected outcome restores them).
+                if (content.any { it is PromptContentPart.File }) {
+                    return PromptOutcome.Rejected(
+                        ImageRejection.SUBAGENT_FILE_UNSUPPORTED,
+                        "SUBAGENT_FILE_UNSUPPORTED",
+                    )
+                }
+                val request = SubagentPromptRequest(
+                    requestId = newPromptRequestId(),
+                    delivery = safeMode,
+                    parentSessionId = target.identity.parentSessionId,
+                    childSessionId = sid,
+                    mode = SUBAGENT_CONTINUABLE_MODE,
+                    content = content,
+                    clientTimeZone = zone,
+                )
+                return when (val r = api.subagentPrompt(request)) {
+                    is RpcResult.Ok -> PromptOutcome.Ok
+                    is RpcResult.Err -> when (r.error.code) {
+                        // The host refused the image (a model without image input, a bad media
+                        // type): the composer's problem, and it keeps the photo staged.
+                        ATTACHMENT_INVALID, SUBAGENT_ATTACHMENT_INVALID -> {
+                            val reason = (r.error.details as? JsonObject)
+                                ?.get("reason")?.jsonPrimitive?.contentOrNull
+                            PromptOutcome.Rejected(imageRejectionOf(reason.orEmpty()), reason)
+                        }
+                        else -> {
+                            // The exact parent Agent not being live is the child's state, not a
+                            // connection fault: report it in the composer instead of the banner.
+                            if (r.error.code != SUBAGENT_PARENT_UNAVAILABLE) setConnectionError(r.error.message)
+                            PromptOutcome.Failed(r.error.message)
+                        }
                     }
-                    PromptOutcome.Failed(r.error.message)
                 }
             }
         }
@@ -2391,7 +2385,11 @@ class SessionStore @Inject constructor(
         return when (val r = api.sessionPrompt(request)) {
             is RpcResult.Ok -> PromptOutcome.Ok
             is RpcResult.Err -> if (r.error.code == ATTACHMENT_INVALID) {
-                promptRejection(r.error)
+                // The host declined the attachments, not the connection. Report it where they are
+                // so the composer can keep them and say which bound they crossed.
+                val reason = (r.error.details as? JsonObject)
+                    ?.get("reason")?.jsonPrimitive?.contentOrNull
+                PromptOutcome.Rejected(imageRejectionOf(reason.orEmpty()), reason)
             } else {
                 setConnectionError(r.error.message)
                 PromptOutcome.Failed(r.error.message)
@@ -2399,25 +2397,16 @@ class SessionStore @Inject constructor(
         }
     }
 
-    /**
-     * An attachment the host declined, not a connection fault.
-     *
-     * Reported where the attachments are, so the composer can keep them and say which bound they
-     * crossed instead of blaming the harness.
-     */
-    private fun promptRejection(error: RpcError): PromptOutcome.Rejected {
-        val reason = (error.details as? JsonObject)?.get("reason")?.jsonPrimitive?.contentOrNull
-        return PromptOutcome.Rejected(imageRejectionOf(reason.orEmpty()), reason)
-    }
-
     suspend fun cancelTurn() {
         val sid = currentSessionId.value ?: return
         val api = apiOrNull() ?: return
-        val address = synchronized(lock) { addressForLocked(sid) }
-        if (address is SessionAddress.Subagent) {
-            // Stopping a child is the parent's call: `interruptByParent` authorizes the address
-            // against the live activation, which is why it works while the parent agent is cold.
-            when (val r = api.subagentInterrupt(childSessionId = address.childSessionId, parentSessionId = address.parentSessionId)) {
+        // Stop on a child goes through `subagents/interruptByParent`, not `session/cancel`: the
+        // latter resolves the ordinary agent behind the session and is refused for subagent
+        // routing's identity. A child this client cannot continue has nothing to stop.
+        val subagent = synchronized(lock) { if (currentId == sid) openSubagent else sessionRows[sid]?.subagent }
+        if (subagent != null) {
+            if (!subagent.continuable) return
+            when (val r = api.subagentInterrupt(childSessionId = sid, parentSessionId = subagent.parentSessionId)) {
                 is RpcResult.Ok -> Unit
                 is RpcResult.Err -> setConnectionError(r.error.message)
             }
@@ -2429,18 +2418,31 @@ class SessionStore @Inject constructor(
         }
     }
 
-    suspend fun updateQueue(itemId: String, action: String, contentText: String? = null, sessionId: String? = currentSessionId.value): Boolean {
-        if (action == "edit" && contentText.isNullOrBlank()) return false
-        val sid = sessionId ?: return false
-        val api = apiOrNull() ?: return false
+    suspend fun updateQueue(itemId: String, action: String, contentText: String? = null, sessionId: String? = currentSessionId.value): Boolean =
+        updateQueueOutcome(itemId, action, contentText, sessionId).succeeded
+
+    /** [updateQueue] with the reason: a caller whose banner is hidden passes `report = false` and says it itself. */
+    suspend fun updateQueueOutcome(
+        itemId: String,
+        action: String,
+        contentText: String? = null,
+        sessionId: String? = currentSessionId.value,
+        report: Boolean = true,
+    ): ActionOutcome<Unit> {
+        if (action == "edit" && contentText.isNullOrBlank()) return ActionOutcome.Failed()
+        val sid = sessionId ?: return ActionOutcome.Failed()
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
         val queueAction: QueueAction = when (action) {
             "remove" -> QueueAction.Remove()
             "steer" -> QueueAction.Steer()
             else -> QueueAction.Edit(listOf(ContentBlock.Text(contentText.orEmpty())))
         }
         return when (val r = api.sessionUpdateQueue(SessionUpdateQueueRequest(sid, itemId, queueAction))) {
-            is RpcResult.Ok -> true
-            is RpcResult.Err -> { setConnectionError(r.error.message); false }
+            is RpcResult.Ok -> ActionOutcome.Done(Unit)
+            is RpcResult.Err -> {
+                if (report) setConnectionError(r.error.message)
+                ActionOutcome.Failed(r.error.message)
+            }
         }
     }
 
@@ -2603,13 +2605,28 @@ class SessionStore @Inject constructor(
     }
 
 
-    suspend fun selectModel(provider: String, model: String, reasoningEffort: String? = null) {
-        val sid = currentSessionId.value ?: return
-        val api = apiOrNull() ?: return
+    /**
+     * Select a model, and optionally its reasoning effort. The picker sits in a sheet over the
+     * chat, so it passes `report = false` and says a refusal inside the sheet itself.
+     */
+    suspend fun selectModel(
+        provider: String,
+        model: String,
+        reasoningEffort: String? = null,
+        report: Boolean = true,
+    ): ActionOutcome<Unit> {
+        val sid = currentSessionId.value ?: return ActionOutcome.Failed()
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
         val request = SessionSelectModelRequest(sid, provider, model, reasoningEffort)
-        when (val r = api.sessionSelectModel(request)) {
-            is RpcResult.Ok -> loadModels(sid)
-            is RpcResult.Err -> setConnectionError(r.error.message)
+        return when (val r = api.sessionSelectModel(request)) {
+            is RpcResult.Ok -> {
+                loadModels(sid)
+                ActionOutcome.Done(Unit)
+            }
+            is RpcResult.Err -> {
+                if (report) setConnectionError(r.error.message)
+                ActionOutcome.Failed(r.error.message)
+            }
         }
     }
 
@@ -2648,17 +2665,40 @@ class SessionStore @Inject constructor(
         }
     }
 
-    suspend fun fetchAttachment(attachmentId: String, sessionId: String? = currentSessionId.value, host: String? = activeHostKey): ByteArray? {
+    /**
+     * Read one durable image.
+     *
+     * Sends the whole reference (the 0.2.2 shape). A host that predates that shape rejects the
+     * request as invalid input rather than as an attachment error, so that specific refusal is
+     * retried once in the legacy id-only shape. Anything else — a missing session, a reference the
+     * session log does not contain — is a real failure and surfaced as it came.
+     */
+    suspend fun fetchAttachment(
+        attachment: ImageAttachmentRef,
+        sessionId: String? = currentSessionId.value,
+        host: String? = activeHostKey,
+    ): ByteArray? {
         val sid = sessionId ?: return null
         val api = host?.let(::apiForHost) ?: return null
-        return when (val r = api.sessionAttachment(SessionAttachmentRequest(sid, attachmentId))) {
-            is RpcResult.Ok -> runCatching { Base64.decode(r.value.data, Base64.DEFAULT) }.getOrNull()
+        val first = api.sessionAttachment(SessionAttachmentRequest(sid, attachment))
+        val result = when {
+            first is RpcResult.Ok -> first
+            (first as RpcResult.Err).error.code.isArgumentShapeRefusal() ->
+                api.sessionAttachmentLegacy(LegacySessionAttachmentRequest(sid, attachment.attachmentId))
+            else -> first
+        }
+        return when (result) {
+            is RpcResult.Ok -> runCatching { Base64.decode(result.value.data, Base64.DEFAULT) }.getOrNull()
             is RpcResult.Err -> {
-                setConnectionError(r.error.message)
+                setConnectionError(result.error.message)
                 null
             }
         }
     }
+
+    /** Input-shape refusals: the host understood the call but not this request revision. */
+    private fun String.isArgumentShapeRefusal(): Boolean = this == "gateway/input-invalid" ||
+        this == "gateway/arguments-invalid"
 
     suspend fun listSkills() {
         val sid = currentSessionId.value ?: return
@@ -2802,44 +2842,152 @@ class SessionStore @Inject constructor(
         }
     }
 
-    suspend fun goalAction(action: String, objective: String? = null) {
-        val sid = currentSessionId.value ?: return
-        val api = apiOrNull() ?: return
-        when (action) {
+    /**
+     * Move [sessionId] to sit in front of [beforeSessionId] (null: last) within its own workspace.
+     *
+     * The list changes at once: the new order is laid over the host's, and then sent. When the host
+     * confirms, its answer replaces the overlay; when it refuses, the overlay is dropped, which puts
+     * every row back where the host has it, and the caller gets [MoveOutcome.Failed] to say so. The
+     * harness can only reorder sessions inside one workspace, so the anchor must be a session of the
+     * same one.
+     *
+     * Moves are sent one at a time in the order they were made. If one fails, those queued behind it
+     * were made against an order that never happened, so they stand down ([MoveOutcome.Superseded])
+     * rather than being sent. The work runs on the store's own scope: a drawer that closes mid-move
+     * must not strand the overlay by cancelling the request that would clear it.
+     */
+    suspend fun moveSession(workspaceId: String, sessionId: String, beforeSessionId: String?): MoveOutcome {
+        val api = apiOrNull() ?: return MoveOutcome.Failed(null)
+        val epoch: Int
+        synchronized(lock) {
+            val row = workspaceRows[workspaceId] ?: return MoveOutcome.Failed(null)
+            val base = pendingSessionOrder[workspaceId] ?: row.sessionIds
+            val next = moveBefore(base, sessionId, beforeSessionId)
+            if (next == base) return MoveOutcome.Unchanged
+            pendingSessionOrder[workspaceId] = next
+            movesInFlight.merge(workspaceId, 1, Int::plus)
+            epoch = moveEpoch
+            emitWorkspacesLocked()
+        }
+        return scope.async {
+            moveMutex.withLock {
+                if (epoch != moveEpoch) return@withLock MoveOutcome.Superseded
+                when (val r = api.workspaceInsertSessionBefore(WorkspaceInsertSessionBeforeRequest(workspaceId, sessionId, beforeSessionId))) {
+                    is RpcResult.Ok -> synchronized(lock) {
+                        workspaceRows[workspaceId] = r.value.workspace.toRow()
+                        settleMoveLocked(workspaceId)
+                        MoveOutcome.Moved
+                    }
+                    is RpcResult.Err -> failMove(r.error.message)
+                }
+            }
+        }.await()
+    }
+
+    /**
+     * Move a whole workspace to sit in front of [beforeWorkspaceId] (null: last) in the registry
+     * order. Applied, sent and rolled back exactly like [moveSession]; the host answers with the
+     * complete order, which replaces ours.
+     */
+    suspend fun moveWorkspace(workspaceId: String, beforeWorkspaceId: String?): MoveOutcome {
+        val api = apiOrNull() ?: return MoveOutcome.Failed(null)
+        val epoch: Int
+        synchronized(lock) {
+            val base = pendingWorkspaceOrder ?: _workspaces.value.map { it.workspaceId }
+            val next = moveBefore(base, workspaceId, beforeWorkspaceId)
+            if (next == base) return MoveOutcome.Unchanged
+            pendingWorkspaceOrder = next
+            movesInFlight.merge(WORKSPACE_ORDER_KEY, 1, Int::plus)
+            epoch = moveEpoch
+            emitWorkspacesLocked()
+        }
+        return scope.async {
+            moveMutex.withLock {
+                if (epoch != moveEpoch) return@withLock MoveOutcome.Superseded
+                when (val r = api.workspaceInsertBefore(WorkspaceInsertBeforeRequest(workspaceId, beforeWorkspaceId))) {
+                    is RpcResult.Ok -> synchronized(lock) {
+                        workspaceOrder.clear()
+                        workspaceOrder.addAll(r.value.workspaceIds)
+                        settleMoveLocked(WORKSPACE_ORDER_KEY)
+                        MoveOutcome.Moved
+                    }
+                    is RpcResult.Err -> failMove(r.error.message)
+                }
+            }
+        }.await()
+    }
+
+    /** One move of [key] is over and the host answered: once none are left, the host's order is the truth. */
+    private fun settleMoveLocked(key: String) {
+        val left = (movesInFlight[key] ?: 1) - 1
+        if (left > 0) {
+            movesInFlight[key] = left
+        } else {
+            movesInFlight.remove(key)
+            if (key == WORKSPACE_ORDER_KEY) pendingWorkspaceOrder = null else pendingSessionOrder.remove(key)
+        }
+        emitWorkspacesLocked()
+    }
+
+    /** A move was refused: drop every overlay (the rollback) and tell the queue behind it to stand down. */
+    private fun failMove(reason: String?): MoveOutcome = synchronized(lock) {
+        moveEpoch++
+        pendingSessionOrder.clear()
+        pendingWorkspaceOrder = null
+        movesInFlight.clear()
+        emitWorkspacesLocked()
+        MoveOutcome.Failed(reason)
+    }
+
+    suspend fun goalAction(action: String, objective: String? = null, report: Boolean = true): ActionOutcome<Unit> {
+        val sid = currentSessionId.value ?: return ActionOutcome.Failed()
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
+        fun <T> settle(result: RpcResult<T>): ActionOutcome<Unit> = when (result) {
+            is RpcResult.Ok -> ActionOutcome.Done(Unit)
+            is RpcResult.Err -> {
+                if (report) setConnectionError(result.error.message)
+                ActionOutcome.Failed(result.error.message)
+            }
+        }
+        return when (action) {
             "create" -> {
                 val obj = objective
                 if (obj.isNullOrBlank()) {
                     log("goal create requires an objective")
-                    return
+                    ActionOutcome.Failed()
+                } else {
+                    settle(api.goalCreate(sid, buildJsonObject { put("objective", JsonPrimitive(obj)) }))
                 }
-                handleResult(
-                    api.goalCreate(sid, buildJsonObject { put("objective", JsonPrimitive(obj)) }),
-                )
             }
             "edit", "pause", "resume", "complete", "clear" -> {
                 val ref = synchronized(lock) { goalRefFromProjectionLocked() }
                 if (ref == null) {
                     log("goal $action requires a current goal (no goal projection)")
-                    setConnectionError(noCurrentGoalMessage())
-                    return
-                }
-                when (action) {
-                    "edit" -> handleResult(
-                        api.goalEdit(
-                            sid,
-                            ref,
-                            buildJsonObject {
-                                if (objective != null) put("objective", JsonPrimitive(objective))
-                            },
-                        ),
-                    )
-                    "pause" -> handleResult(api.goalPause(sid, ref))
-                    "resume" -> handleResult(api.goalResume(sid, ref))
-                    "complete" -> handleResult(api.goalComplete(sid, ref))
-                    "clear" -> handleResult(api.goalClear(sid, ref))
+                    val message = noCurrentGoalMessage()
+                    if (report) setConnectionError(message)
+                    ActionOutcome.Failed(message)
+                } else {
+                    when (action) {
+                        "edit" -> settle(
+                            api.goalEdit(
+                                sid,
+                                ref,
+                                buildJsonObject {
+                                    if (objective != null) put("objective", JsonPrimitive(objective))
+                                },
+                            ),
+                        )
+                        "pause" -> settle(api.goalPause(sid, ref))
+                        "resume" -> settle(api.goalResume(sid, ref))
+                        "complete" -> settle(api.goalComplete(sid, ref))
+                        else -> settle(api.goalClear(sid, ref))
+                    }
                 }
             }
-            else -> log("unknown goal action $action")
+            else -> {
+                log("unknown goal action $action")
+                ActionOutcome.Failed()
+            }
         }
     }
 
@@ -2890,6 +3038,7 @@ class SessionStore @Inject constructor(
         attachments: List<CommandSubmitAttachment> = emptyList(),
         targetSessionId: String? = currentSessionId.value,
         targetHost: String? = activeHostKey,
+        report: Boolean = true,
     ): CommandOutcome {
         val sid = targetSessionId ?: return CommandOutcome.Failed("no open session")
         val api = apiForHost(targetHost) ?: return CommandOutcome.Failed("not connected")
@@ -2922,7 +3071,7 @@ class SessionStore @Inject constructor(
                     CommandOutcome.Failed(r.error.message)
                 }
                 else -> {
-                    setConnectionError(r.error.message)
+                    if (report) setConnectionError(r.error.message)
                     CommandOutcome.Failed(r.error.message)
                 }
             }
@@ -2932,15 +3081,23 @@ class SessionStore @Inject constructor(
     /**
      * Switch the session's permission preset. The read side is the `permissions` projection, so
      * there is nothing to refresh — the harness pushes the new value back on a projection frame.
+     *
+     * Returns once the switch has ended, whichever way it ended (see [PermissionSwitchResult]).
+     * The command is bound to the session and host the pick was made in, and runs on the store's
+     * own scope: a caller that leaves composition while it is in flight stops waiting, and the
+     * pending state still ends.
      */
-    suspend fun setPermissionPreset(value: String): CommandOutcome {
+    suspend fun setPermissionPreset(value: String): PermissionSwitchResult {
         if (value == CUSTOM_PRESET) {
-            return CommandOutcome.Failed("`$CUSTOM_PRESET` is a derived state, not a preset")
+            return PermissionSwitchResult.Failed(
+                CommandOutcome.Failed("`$CUSTOM_PRESET` is a derived state, not a preset"),
+            )
         }
-        _pendingPermission.value = value
-        val outcome = runCommand("/permission $value")
-        if (outcome !is CommandOutcome.Ok) _pendingPermission.value = null
-        return outcome
+        val sid = currentSessionId.value
+        val host = activeHostKey
+        return permissionSwitch.switchTo(value, permissions.value?.currentValue) {
+            runCommand("/permission $value", targetSessionId = sid, targetHost = host)
+        }
     }
 
     /**
@@ -2994,23 +3151,17 @@ class SessionStore @Inject constructor(
      * Stream the open session's log ZIP into [sink]. The caller owns [sink] and should close it;
      * the harness answers this as a plain attachment download, not an RPC.
      */
-    suspend fun exportSessionTo(sink: OutputStream, includeDescendants: Boolean = false): Boolean {
-        val sid = currentSessionId.value ?: return false
-        val api = apiOrNull() ?: return false
-        val result = api.sessionExport(sid, includeDescendants) { _, _, body -> body.copyTo(sink) }
+    suspend fun exportSessionTo(sink: OutputStream, includeDescendants: Boolean = false, report: Boolean = true): ActionOutcome<Unit> {
+        val sid = currentSessionId.value ?: return ActionOutcome.Failed()
+        val api = apiOrNull() ?: return ActionOutcome.Failed()
+        val result = api.sessionExport(sid, includeDescendants) { _, _, body -> body.asInputStream().copyTo(sink) }
         return when (result) {
-            is RpcResult.Ok -> true
+            is RpcResult.Ok -> ActionOutcome.Done(Unit)
             is RpcResult.Err -> {
-                setConnectionError(result.error.message)
-                false
+                if (report) setConnectionError(result.error.message)
+                ActionOutcome.Failed(result.error.message)
             }
         }
-    }
-
-    suspend fun exportSessionUrl(): String? {
-        val sid = currentSessionId.value ?: return null
-        val host = connectionManager.state.value.host ?: return null
-        return "${host.baseUrl}/api/session.export?sessionId=$sid"
     }
 
     /** True while [sessionId] is the session currently open in the foreground. */
@@ -3145,15 +3296,8 @@ class SessionStore @Inject constructor(
 
     private fun apiOrNull(): DshApiClient? {
         val api = connectionManager.connectedApi
-        if (api == null) log("not connected — ignoring request")
+        if (api == null) log("not connected: ignoring request")
         return api
-    }
-
-    private fun <T> handleResult(result: RpcResult<T>) {
-        when (result) {
-            is RpcResult.Ok -> Unit
-            is RpcResult.Err -> setConnectionError(result.error.message)
-        }
     }
 
     private fun log(message: String, throwable: Throwable? = null) {
@@ -3172,27 +3316,15 @@ class SessionStore @Inject constructor(
         /** Harness 0.1.7's refusal to archive a session with running work; see [archiveSession]. */
         const val SESSION_ACTIVE = "workspace/session-active"
 
+        /** [movesInFlight]'s key for a reorder of the workspaces themselves rather than of one's sessions. */
+        private const val WORKSPACE_ORDER_KEY = "\u0000workspaces"
+
         /** Minted by the client from a 404: no route claimed the endpoint. */
         const val CAPABILITY_UNAVAILABLE = "capability-unavailable"
 
         /** Largest file the base64 Remote fallback will carry; anything bigger needs the route. */
         const val MAX_ENCODED_UPLOAD_BYTES = 20L * 1024 * 1024
         const val HISTORY_PAGE_SIZE = 60
-
-        /** Reopen delay for `workspace/follow`, so a closed socket is not retried in a tight loop. */
-        const val WORKSPACE_RETRY_MIN_MS = 1_000L
-        const val WORKSPACE_RETRY_MAX_MS = 30_000L
-
-        /** Sessions whose events are kept off-screen; what switching back can paint from. */
-        const val MAX_SESSION_CACHES = 6
-
-        /**
-         * Events kept per cached session.
-         *
-         * A turn is a few hundred events once tool traffic is counted, so this holds the recent
-         * past of a session without letting an abandoned one grow without bound.
-         */
-        const val MAX_CACHED_EVENTS = 400
 
         /** Ceiling on events folded per page, whatever the host sends. */
         const val MAX_PAGE_EVENTS = 4_000
@@ -3210,5 +3342,12 @@ class SessionStore @Inject constructor(
          * drawn, and the deltas of a single turn arrive far faster than that.
          */
         const val REBUILD_INTERVAL_MS = 50L
+
+        /**
+         * The least time between two fallback list reads. The pushes are the fast path; this read
+         * only repairs what they missed, so a few seconds is soon enough and keeps a drawer that
+         * is opened and closed repeatedly from asking the host each time.
+         */
+        const val SESSION_SYNC_MIN_INTERVAL_MS = 4_000L
     }
 }

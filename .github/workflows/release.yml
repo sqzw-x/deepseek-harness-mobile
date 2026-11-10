@@ -52,7 +52,7 @@ jobs:
 
       - name: Unit tests
         if: steps.signing.outputs.available == 'true'
-        run: ./gradlew :core:test :mock-harness:test :app:testReleaseUnitTest --stacktrace
+        run: ./gradlew :core:jvmTest :mock-harness:test :app:testReleaseUnitTest --stacktrace
 
       - name: Build release APK
         if: steps.signing.outputs.available == 'true'

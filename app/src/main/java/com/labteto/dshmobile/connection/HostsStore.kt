@@ -41,14 +41,22 @@ class HostsStore @Inject constructor(
         val NOTIFY_GOAL = booleanPreferencesKey("notify_goal")
         val NOTIFY_ACTION = booleanPreferencesKey("notify_action")
         val THEME = stringPreferencesKey("theme")
+        val THEME_ACCENT = stringPreferencesKey("theme_accent")
+        val THEME_CUSTOM_ACCENT = stringPreferencesKey("theme_custom_accent")
+        val THEME_AMOLED = booleanPreferencesKey("theme_amoled")
+        val FONT_SIZE = stringPreferencesKey("theme_font_size")
+        val HAPTICS = booleanPreferencesKey("haptics_enabled")
+        val HAPTIC_STRENGTH = stringPreferencesKey("haptic_strength")
         val LOCALE = stringPreferencesKey("locale")
         val PORTS = stringPreferencesKey("ports_json")
         val LAST_SESSIONS = stringPreferencesKey("last_sessions_json")
         val SESSION_SORT = stringPreferencesKey("session_sort")
-        val COLLAPSED_WORKSPACES = stringSetPreferencesKey("collapsed_workspaces")
+        val UNGROUPED_ORDER = stringPreferencesKey("ungrouped_session_order_json")
+        val COLLAPSED_PROJECTS = stringPreferencesKey("collapsed_projects_json")
         val UPDATE_CHECK = booleanPreferencesKey("update_check")
         val DISMISSED_UPDATE = stringPreferencesKey("dismissed_update")
         val FOLLOW_STREAMING = booleanPreferencesKey("follow_streaming")
+        val DEFAULT_DELIVERY_MODE = stringPreferencesKey("default_delivery_mode")
     }
 
     private val hostsSerializer = ListSerializer(HostConfig.serializer())
@@ -79,11 +87,18 @@ class HostsStore @Inject constructor(
             notifyGoal = prefs[Keys.NOTIFY_GOAL] ?: true,
             notifyNeedsAction = prefs[Keys.NOTIFY_ACTION] ?: true,
             themePreference = prefs[Keys.THEME] ?: "system",
+            themeAccent = prefs[Keys.THEME_ACCENT] ?: "ink",
+            themeCustomAccent = prefs[Keys.THEME_CUSTOM_ACCENT],
+            amoledBlack = prefs[Keys.THEME_AMOLED] ?: false,
+            fontSize = prefs[Keys.FONT_SIZE] ?: "default",
+            hapticsEnabled = prefs[Keys.HAPTICS] ?: true,
+            hapticStrength = prefs[Keys.HAPTIC_STRENGTH] ?: "normal",
             localeOverride = prefs[Keys.LOCALE],
             knownPorts = ports,
             updateCheckEnabled = prefs[Keys.UPDATE_CHECK] ?: true,
             dismissedUpdate = prefs[Keys.DISMISSED_UPDATE],
             followStreamingReply = prefs[Keys.FOLLOW_STREAMING] ?: true,
+            defaultDeliveryMode = normalizeDeliveryMode(prefs[Keys.DEFAULT_DELIVERY_MODE] ?: DELIVERY_QUEUE),
         )
     }
 
@@ -197,25 +212,56 @@ class HostsStore @Inject constructor(
         return runCatching { WireJson.decodeFromString(lastSessionsSerializer, raw) }.getOrDefault(emptyMap())
     }
 
-    /** Drawer session ordering: `"manual"` follows the workspace order, `"updated"` sorts by recency. */
+    /**
+     * Drawer session ordering: `"manual"` follows the workspace order, `"updated"` sorts by recency,
+     * `"project"` groups under each workspace's header. Anything else reads as manual.
+     */
     val sessionSort: Flow<String> = dataStore.data.map { it[Keys.SESSION_SORT] ?: "manual" }
 
     suspend fun setSessionSort(value: String) {
         dataStore.edit { it[Keys.SESSION_SORT] = value }
     }
 
-    /**
-     * Drawer workspace groups closed by hand. Absence means expanded, so a workspace nobody has
-     * touched opens by default and the drawer never reshapes itself around the session on screen.
-     */
-    val collapsedWorkspaces: Flow<Set<String>> =
-        dataStore.data.map { it[Keys.COLLAPSED_WORKSPACES] ?: emptySet() }
+    private val perHostListSerializer = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
 
-    suspend fun setWorkspaceCollapsed(workspaceId: String, collapsed: Boolean) {
+    private fun perHostList(raw: String?): Map<String, List<String>> =
+        raw?.let { runCatching { WireJson.decodeFromString(perHostListSerializer, it) }.getOrNull() } ?: emptyMap()
+
+    /** Write [ids] under [hostKey], newest host first, keeping only the last few hosts. */
+    private fun withHostList(raw: String?, hostKey: String, ids: List<String>?): String {
+        val next = LinkedHashMap<String, List<String>>()
+        if (ids != null) next[hostKey] = ids
+        perHostList(raw).forEach { (key, value) -> if (key != hostKey) next[key] = value }
+        val trimmed = next.entries.take(MAX_REMEMBERED_HOSTS).associate { it.key to it.value }
+        return WireJson.encodeToString(perHostListSerializer, trimmed)
+    }
+
+    /**
+     * The order the reader gave the sessions that belong to no workspace on [hostKey].
+     *
+     * The harness keeps an order only for sessions inside a workspace, so a session without one has
+     * nowhere on the host to be moved to. The order lives here instead, per host, as the ids in the
+     * reader's arrangement. Ids of sessions that no longer exist are harmless and ignored by the
+     * drawer.
+     */
+    fun ungroupedOrder(hostKey: String?): Flow<List<String>> = dataStore.data.map { prefs ->
+        hostKey?.let { perHostList(prefs[Keys.UNGROUPED_ORDER])[it] }.orEmpty()
+    }
+
+    suspend fun setUngroupedOrder(hostKey: String, ids: List<String>) {
+        dataStore.edit { it[Keys.UNGROUPED_ORDER] = withHostList(it[Keys.UNGROUPED_ORDER], hostKey, ids.take(MAX_ORDERED_SESSIONS)) }
+    }
+
+    /** The projects (workspace ids, or the "other" group's key) the reader folded shut on [hostKey]. */
+    fun collapsedProjects(hostKey: String?): Flow<Set<String>> = dataStore.data.map { prefs ->
+        hostKey?.let { perHostList(prefs[Keys.COLLAPSED_PROJECTS])[it] }.orEmpty().toSet()
+    }
+
+    suspend fun setProjectCollapsed(hostKey: String, projectKey: String, collapsed: Boolean) {
         dataStore.edit { prefs ->
-            val current = prefs[Keys.COLLAPSED_WORKSPACES] ?: emptySet()
-            prefs[Keys.COLLAPSED_WORKSPACES] =
-                if (collapsed) current + workspaceId else current - workspaceId
+            val current = perHostList(prefs[Keys.COLLAPSED_PROJECTS])[hostKey].orEmpty()
+            val next = if (collapsed) (current + projectKey).distinct() else current - projectKey
+            prefs[Keys.COLLAPSED_PROJECTS] = withHostList(prefs[Keys.COLLAPSED_PROJECTS], hostKey, next)
         }
     }
 
@@ -247,8 +293,15 @@ class HostsStore @Inject constructor(
             prefs[Keys.NOTIFY_GOAL] = next.notifyGoal
             prefs[Keys.NOTIFY_ACTION] = next.notifyNeedsAction
             prefs[Keys.THEME] = next.themePreference
+            prefs[Keys.THEME_ACCENT] = next.themeAccent
+            next.themeCustomAccent?.let { prefs[Keys.THEME_CUSTOM_ACCENT] = it } ?: prefs.remove(Keys.THEME_CUSTOM_ACCENT)
+            prefs[Keys.THEME_AMOLED] = next.amoledBlack
+            prefs[Keys.FONT_SIZE] = next.fontSize
+            prefs[Keys.HAPTICS] = next.hapticsEnabled
+            prefs[Keys.HAPTIC_STRENGTH] = next.hapticStrength
             prefs[Keys.UPDATE_CHECK] = next.updateCheckEnabled
             prefs[Keys.FOLLOW_STREAMING] = next.followStreamingReply
+            prefs[Keys.DEFAULT_DELIVERY_MODE] = normalizeDeliveryMode(next.defaultDeliveryMode)
             next.localeOverride?.let { prefs[Keys.LOCALE] = it } ?: prefs.remove(Keys.LOCALE)
         }
     }
@@ -303,21 +356,10 @@ class HostsStore @Inject constructor(
         /** Bound on the remembered-session map, matching the known-port cap. */
         const val MAX_REMEMBERED_HOSTS = 8
 
+        /** Bound on one host's saved ungrouped order, so a long-lived install cannot grow it forever. */
+        const val MAX_ORDERED_SESSIONS = 500
+
         /** The address "this phone" mode reaches; the harness trusts it without configuration. */
         const val LOOPBACK_HOST = "127.0.0.1"
     }
 }
-
-/**
- * What a successful relay pairing tells this app about an endpoint.
- *
- * Grouped rather than passed as four loose parameters because they are only ever meaningful
- * together: a fingerprint without a device id describes a relay this device cannot talk to, and a
- * device id without a scheme describes one it cannot address.
- */
-data class RelayIdentity(
-    val deviceId: String,
-    val useTls: Boolean,
-    val fingerprint: String?,
-    val tokenExpiresAt: Long,
-)

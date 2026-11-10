@@ -18,6 +18,8 @@ Treat it as a separate product: upstream is a source of changes, not an authorit
 |------|----------|
 | `core/` | Pure JVM, no Android dependencies: wire DTOs, RPC client, downlink, reconnect, event folding |
 | `app/` | Compose UI, connection and discovery, foreground service, notifications, 11-language i18n |
+| `sharedUi/` | Compose Multiplatform library shared with iOS: design system, shared components, the Connect screen |
+| `iosApp/` | SwiftUI host and XcodeGen scripts for the iOS app; not built by the Android gates |
 | `mock-harness/` | Ktor mock of the harness `/api` server |
 | `conformance/` | End-to-end tests against a real harness checkout |
 | `harness/` | Host-side setup: LAN patch and Termux companion |
@@ -77,15 +79,15 @@ Requires JDK 17+ and Android SDK 35. There is no root `package.json`; Gradle is 
 
 ```bash
 ./gradlew :app:assembleDebug          # debug APK
-./gradlew :core:test                  # pure-JVM wire and folding tests
+./gradlew :core:jvmTest                # pure-JVM wire and folding tests
 ./gradlew :app:testDebugUnitTest      # app unit tests
 ./gradlew :app:lintDebug              # lint
-./gradlew :core:test :mock-harness:test   # fast loop, no Android SDK device needed
+./gradlew :core:jvmTest :mock-harness:test :sharedUi:testDebugUnitTest   # fast loop, no device needed
 ```
 
 Real-host conformance needs a harness checkout and is driven by
 `DSH_HARNESS_SRC=<path> ./gradlew :conformance:test`. CI pins the harness commit; see
-`.github/workflows/ci.yml`. Prefer the `:core:test` loop while changing protocol or DTO code.
+`.github/workflows/ci.yml`. Prefer the `:core:jvmTest` loop while changing protocol or DTO code.
 
 ## Conventions
 

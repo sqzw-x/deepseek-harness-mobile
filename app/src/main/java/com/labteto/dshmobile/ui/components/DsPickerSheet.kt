@@ -1,7 +1,5 @@
 package com.labteto.dshmobile.ui.components
 
-import android.graphics.drawable.ColorDrawable
-import android.view.ViewParent
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -29,7 +27,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -40,16 +37,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.ui.theme.DsShapes
 import com.labteto.dshmobile.ui.theme.DsSpacing
@@ -110,24 +103,7 @@ fun DsPickerSheet(
 
     LaunchedEffect(Unit) { animateTo(0f) }
 
-    Dialog(
-        onDismissRequest = { dismiss() },
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-            dismissOnClickOutside = false,
-        ),
-    ) {
-        val view = LocalView.current
-        SideEffect {
-            var parent: ViewParent? = view.parent
-            while (parent != null && parent !is DialogWindowProvider) parent = parent.parent
-            (parent as? DialogWindowProvider)?.window?.apply {
-                setDimAmount(0f)
-                setWindowAnimations(0)
-                setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
-            }
-        }
+    DsBareDialog(onDismissRequest = { dismiss() }) {
         Box(Modifier.fillMaxSize().imePadding()) {
             Box(
                 Modifier

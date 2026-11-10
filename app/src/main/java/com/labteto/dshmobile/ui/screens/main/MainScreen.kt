@@ -44,12 +44,18 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.ui.components.DsToastHost
+import com.labteto.dshmobile.ui.components.rememberDsHaptics
 import com.labteto.dshmobile.ui.components.rememberDsToast
 import com.labteto.dshmobile.ui.theme.DsTheme
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -81,8 +87,28 @@ fun MainScreen(onOpenSettings: () -> Unit) {
     val scope = rememberCoroutineScope()
     var automationsOpen by remember { mutableStateOf(false) }
     var automationSession by remember { mutableStateOf<String?>(null) }
+    // A subagent the Details panel asked to show. The transcript is the chat screen's sheet, so the
+    // request travels from the panel to the chat through here and is cleared once the chat has it.
+    var subagentRequest by remember { mutableStateOf<String?>(null) }
     val store = com.labteto.dshmobile.ui.rememberSessionStore()
     val automationAvailable by store.automationAvailable.collectAsStateWithLifecycle()
+    // Sessions started, renamed or archived on the computer reach this list by push, and a push is
+    // never replayed after a gap, so the drawer also re-reads the list when it opens and when the
+    // app comes back to the front, and now and then while it stays open. The store spaces these
+    // reads out and runs them quietly; see SessionStore.refreshSessionsIfStale.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val drawerWanted = drawerState.targetValue == DrawerValue.Open
+    LaunchedEffect(drawerWanted, lifecycleOwner) {
+        if (!drawerWanted) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                store.refreshSessionsIfStale()
+                delay(DrawerSyncPeriodMs)
+            }
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { store.refreshSessionsIfStale() } }
+
     val toast = rememberDsToast()
     val unsupportedAutomation = stringResource(R.string.ux_b_automation_unavailable)
     LaunchedEffect(automationAvailable, automationsOpen) {
@@ -98,7 +124,11 @@ fun MainScreen(onOpenSettings: () -> Unit) {
     // goes through `settleDetails`, so a fling's velocity carries into the settle.
     var detailsOpen by remember { mutableStateOf(false) }
     val reveal = remember { Animatable(0f) }
+    val haptics = rememberDsHaptics()
     fun settleDetails(open: Boolean, velocity: Float = 0f) {
+        // Only the intent speaks: a drag that settles keeps its silence, an open/close from a tap
+        // or the back gesture gets one tick.
+        if (open != detailsOpen) haptics.selection()
         detailsOpen = open
         scope.launch { reveal.animateTo(if (open) 1f else 0f, PanelSpring, initialVelocity = velocity) }
     }
@@ -117,7 +147,6 @@ fun MainScreen(onOpenSettings: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(DrawerWidthFraction),
             ) {
                 ChatListDrawer(
-                    open = drawerState.isOpen,
                     onClose = { scope.launch { drawerState.close() } },
                     onOpenSettings = onOpenSettings,
                     onOpenAutomations = { automationSession = null; automationsOpen = true; scope.launch { drawerState.close() } },
@@ -198,8 +227,13 @@ fun MainScreen(onOpenSettings: () -> Unit) {
                 Box(Modifier.fillMaxSize().blur((6 * progress).dp)) {
                     ChatScreen(
                         onOpenDetails = { settleDetails(true) },
-                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onOpenDrawer = {
+                            haptics.tap()
+                            scope.launch { drawerState.open() }
+                        },
                         detailsOpen = detailsOpen,
+                        subagentRequest = subagentRequest,
+                        onSubagentRequestHandled = { subagentRequest = null },
                     )
                 }
 
@@ -223,6 +257,16 @@ fun MainScreen(onOpenSettings: () -> Unit) {
                         onOpenAutomations = {
                             automationSession = store.currentSessionId.value
                             automationsOpen = true
+                            settleDetails(false)
+                        },
+                        onOpenSubagent = { childId ->
+                            subagentRequest = childId
+                            settleDetails(false)
+                        },
+                        // Launched here rather than in the panel: the panel is on its way out, and a
+                        // coroutine tied to it would be cancelled before the session finished opening.
+                        onOpenSession = { sessionId ->
+                            scope.launch { store.openSession(sessionId) }
                             settleDetails(false)
                         },
                         modifier = Modifier
@@ -269,3 +313,6 @@ private const val BackPeek = 0.4f
 
 /** The chat list keeps a sliver of the conversation visible, so the scrim has somewhere to be tapped. */
 private const val DrawerWidthFraction = 0.9f
+
+/** How often an open sessions drawer re-reads the list as a fallback for pushes it missed. */
+private const val DrawerSyncPeriodMs = 15_000L

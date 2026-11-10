@@ -40,13 +40,18 @@ El [sitio del proyecto](https://dshm.zyphite.com) ofrece una presentación en un
 
 | Conectar | Chat | Trayectoria | Detalles |
 |:--:|:--:|:--:|:--:|
-| <img src="docs/images/home.png" width="200" alt="Pantalla de conexión con un enlace de dsh web pegado en el campo de dirección"> | <img src="docs/images/chat.png" width="200" alt="Una respuesta llegando en streaming mientras la barra superior dice Trabajando y se ve el botón Detener"> | <img src="docs/images/trajectory.png" width="200" alt="Pestaña Trayectoria con todas las llamadas a herramientas del primer turno"> | <img src="docs/images/session-info.png" width="200" alt="Panel Detalles con la sesión, su modelo, el uso del contexto y la actividad"> |
+| <img src="docs/images/home.png" width="200" alt="Pantalla de conexión con la dirección del harness escrita en el campo"> | <img src="docs/images/chat.png" width="200" alt="Una respuesta llegando en streaming mientras la barra superior dice Trabajando y se ve el botón Detener"> | <img src="docs/images/trajectory.png" width="200" alt="Pestaña Trayectoria con todas las llamadas a herramientas del primer turno"> | <img src="docs/images/session-info.png" width="200" alt="Panel Detalles con la sesión, su modelo, el uso del contexto y la actividad"> |
 | Pega el enlace que imprime el harness y quedas conectado y con la sesión iniciada. | Las respuestas llegan en streaming. Las llamadas a herramientas se agrupan en una fila que puedes abrir. | Cada llamada a herramienta, turno a turno. | El modelo, el contexto, el objetivo, el modo plan y los trabajos de la sesión. |
 
-| Subagentes | Terminal | Tema oscuro |
-|:--:|:--:|:--:|
-| <img src="docs/images/subagent.png" width="200" alt="La transcripción de un subagente con sus hallazgos y un cuadro para escribir un mensaje de seguimiento"> | <img src="docs/images/terminal.png" width="200" alt="Una terminal en el ordenador del harness con una ejecución de pruebas superada"> | <img src="docs/images/dark.png" width="200" alt="El chat con el tema oscuro"> |
-| Lee lo que hizo un subagente y envíale un mensaje de seguimiento. | Un shell real en el ordenador del harness. | Claro, oscuro o el del sistema. |
+| Subagentes | Terminal | Sesiones | Vista previa |
+|:--:|:--:|:--:|:--:|
+| <img src="docs/images/subagent.png" width="200" alt="La transcripción de un subagente con sus hallazgos y un cuadro para escribir un mensaje de seguimiento"> | <img src="docs/images/terminal.png" width="200" alt="Una terminal en el ordenador del harness con una ejecución de pruebas superada"> | <img src="docs/images/sessions.png" width="200" alt="El panel de sesiones agrupado por proyecto, con un asa para arrastrar en cada fila"> | <img src="docs/images/preview.png" width="200" alt="Un README en vista completa, dibujado como lo hace GitHub, con insignias, una tabla y un bloque de código"> |
+| Lee lo que hizo un subagente y envíale un mensaje de seguimiento. | Un shell real en el ordenador del harness. | Agrupa las sesiones por proyecto y arrástralas al orden que prefieras. | Un README dibujado como lo hace GitHub, en su propia pantalla. |
+
+| Apariencia | Selector de color | Tema claro | Tema oscuro |
+|:--:|:--:|:--:|:--:|
+| <img src="docs/images/appearance.png" width="200" alt="Ajustes de apariencia con un color de acento personalizado, el tamaño del texto y las opciones de respuesta táctil"> | <img src="docs/images/accent-picker.png" width="200" alt="El selector de color personalizado con una franja de tono, un área de brillo y un campo hexadecimal"> | <img src="docs/images/light.png" width="200" alt="El chat con el tema claro"> | <img src="docs/images/dark.png" width="200" alt="El chat con el tema oscuro"> |
+| Siete colores de acento o el que quieras, y una respuesta táctil que puedes probar. | Elige un color con la franja y el área, o escribe un código hexadecimal. | Claro, con un aspecto de papel cálido. | Oscuro, o el del sistema. |
 
 ## Qué puedes hacer
 
@@ -61,12 +66,21 @@ El [sitio del proyecto](https://dshm.zyphite.com) ofrece una presentación en un
 - Seguir de cerca los trabajos largos. Los objetivos, las listas de tareas pendientes, los
   mensajes en cola, los trabajos en segundo plano y los subagentes tienen cada uno su propia
   vista, y puedes pausarlos, dirigirlos o detenerlos.
+- Organizar las sesiones a tu manera. Arrástralas para ponerlas en el orden que quieras, o
+  agrúpalas por proyecto y pliega los grupos que no uses.
+- Buscar con un mismo campo de búsqueda en todas partes: sesiones, modelos, comandos, plugins,
+  tareas programadas y archivos del espacio de trabajo.
 - Recibir una notificación cuando termina un turno, cuando un objetivo se completa o se bloquea, o
   cuando el agente espera una respuesta. La conexión se mantiene activa en segundo plano.
 - Explorar y previsualizar los archivos del espacio de trabajo, y abrir una terminal en el
   ordenador del harness.
+- Abrir archivos a pantalla completa en la vista previa: tablas CSV, árboles JSON, notebooks,
+  PDF, imágenes, vídeo, audio y archivos comprimidos, con búsqueda dentro del archivo. Guardar una
+  copia deja cualquier archivo en tu teléfono.
 - Gestionar el propio harness: modelos, preajustes de agente, plugins, tareas programadas y
   sesiones archivadas.
+- Personalizar la aplicación. El diseño Ink viene en claro y oscuro, con colores de acento
+  predefinidos o uno propio, negro puro para pantallas OLED y un tamaño de texto que puedes cambiar.
 - Usar la aplicación en inglés, chino, hindi, español, francés, árabe, bengalí, portugués, ruso,
   urdu o tailandés. Admite idiomas que se escriben de derecha a izquierda.
 
@@ -145,7 +159,7 @@ tu ordenador. Iniciar sesión equivale a dar acceso a un shell.
 
 ## Compatibilidad
 
-DSH Mobile se prueba con **DeepSeek Harness 0.2.1-rc.2**. Las versiones anteriores del harness,
+DSH Mobile se prueba con **DeepSeek Harness 0.2.2-rc.1**. Las versiones anteriores del harness,
 hasta la 0.1.6, siguen funcionando en su mayor parte, pero las funciones nuevas necesitan un
 harness más reciente. La [tabla de compatibilidad](docs/COMPATIBILITY.md) indica qué versión de la
 aplicación corresponde a cada versión del harness.
@@ -155,7 +169,7 @@ aplicación corresponde a cada versión del harness.
 ```sh
 ./gradlew :app:assembleDebug      # debug APK
 ./gradlew :app:assembleRelease    # release APK, signed when the keystore environment is set
-./gradlew :core:test :app:testDebugUnitTest
+./gradlew :core:jvmTest :app:testDebugUnitTest
 ```
 
 Para comprobar la aplicación con un harness real, compila una copia local del repositorio del

@@ -40,13 +40,18 @@ The [project site](https://dshm.zyphite.com) has a one-page overview, and the
 
 | Connect | Chat | Trajectory | Details |
 |:--:|:--:|:--:|:--:|
-| <img src="docs/images/home.png" width="200" alt="Connect screen with a pasted dsh web link in the address field"> | <img src="docs/images/chat.png" width="200" alt="A reply streaming in while the top bar says Working and the stop button is showing"> | <img src="docs/images/trajectory.png" width="200" alt="Trajectory tab listing every tool call of the first turn"> | <img src="docs/images/session-info.png" width="200" alt="Details panel with the session, its model, context use and activity"> |
+| <img src="docs/images/home.png" width="200" alt="Connect screen with the harness address filled in"> | <img src="docs/images/chat.png" width="200" alt="A reply streaming in while the top bar says Working and the stop button is showing"> | <img src="docs/images/trajectory.png" width="200" alt="Trajectory tab listing every tool call of the first turn"> | <img src="docs/images/session-info.png" width="200" alt="Details panel with the session, its model, context use and activity"> |
 | Paste the link the harness prints, and you are connected and signed in. | Replies stream in. Tool calls fold into one row you can open. | Every tool call, turn by turn. | The session's model, context, goal, plan mode and jobs. |
 
-| Subagents | Terminal | Dark theme |
-|:--:|:--:|:--:|
-| <img src="docs/images/subagent.png" width="200" alt="A subagent's transcript with its findings and a box for a follow-up message"> | <img src="docs/images/terminal.png" width="200" alt="A terminal on the harness computer showing a passing test run"> | <img src="docs/images/dark.png" width="200" alt="The chat in the dark theme"> |
-| Read what a subagent did and send it a follow-up. | A real shell on the harness computer. | Light, dark, or follow the system. |
+| Subagents | Terminal | Sessions | Preview |
+|:--:|:--:|:--:|:--:|
+| <img src="docs/images/subagent.png" width="200" alt="A subagent's transcript with its findings and a box for a follow-up message"> | <img src="docs/images/terminal.png" width="200" alt="A terminal on the harness computer showing a passing test run"> | <img src="docs/images/sessions.png" width="200" alt="The sessions drawer grouped by project, with a drag handle on every row"> | <img src="docs/images/preview.png" width="200" alt="A README in full-screen preview, drawn like GitHub draws it, with badges, a table and a code block"> |
+| Read what a subagent did and send it a follow-up. | A real shell on the harness computer. | Group sessions by project and drag them into your own order. | A README drawn the way GitHub draws it, on its own screen. |
+
+| Appearance | Color picker | Light theme | Dark theme |
+|:--:|:--:|:--:|:--:|
+| <img src="docs/images/appearance.png" width="200" alt="Appearance settings with a custom accent color, text size and the haptics options"> | <img src="docs/images/accent-picker.png" width="200" alt="The custom color picker with a hue strip, a brightness area and a hex field"> | <img src="docs/images/light.png" width="200" alt="The chat in the light theme"> | <img src="docs/images/dark.png" width="200" alt="The chat in the dark theme"> |
+| Seven accent colors or any color you like, and haptics you can try. | Pick a color with the strip and the area, or type a hex code. | Light, with a warm paper look. | Dark, or follow the system. |
 
 ## What you can do
 
@@ -58,11 +63,19 @@ The [project site](https://dshm.zyphite.com) has a one-page overview, and the
   review a plan before it starts.
 - Keep an eye on long work. Goals, todo lists, queued messages, background jobs and subagents
   each have their own view, and you can pause, steer or stop them.
+- Keep your sessions the way you like them. Drag them into your own order, or group them by
+  project and fold the groups you are not using.
+- Find things with one search field that works the same everywhere: sessions, models, commands,
+  plugins, scheduled tasks and workspace files.
 - Get a notification when a turn finishes, a goal completes or gets blocked, or the agent is
   waiting for an answer. The connection stays up in the background.
 - Browse and preview the workspace files, and open a terminal on the harness computer.
+- Open files full screen in Preview: CSV tables, JSON trees, notebooks, PDFs, pictures, video,
+  audio and archives, with find in file. Save a copy puts any file on your phone.
 - Manage the harness itself: models, agent presets, plugins, scheduled tasks and archived
   sessions.
+- Make it yours. The Ink design comes in light and dark, with accent presets or a colour of your
+  own, true black for OLED screens and a text size you can change.
 - Use the app in English, Chinese, Hindi, Spanish, French, Arabic, Bengali, Portuguese,
   Russian, Urdu or Thai. Right-to-left languages are supported.
 
@@ -140,7 +153,7 @@ giving out shell access.
 
 ## Compatibility
 
-DSH Mobile is tested against **DeepSeek Harness 0.2.1-rc.2**. Older harness versions back to
+DSH Mobile is tested against **DeepSeek Harness 0.2.2-rc.1**. Older harness versions back to
 0.1.6 still work for the most part, but newer features need a newer harness. The
 [compatibility table](docs/COMPATIBILITY.md) lists which app version goes with which harness.
 
@@ -149,7 +162,7 @@ DSH Mobile is tested against **DeepSeek Harness 0.2.1-rc.2**. Older harness vers
 ```sh
 ./gradlew :app:assembleDebug      # debug APK
 ./gradlew :app:assembleRelease    # release APK, signed when the keystore environment is set
-./gradlew :core:test :app:testDebugUnitTest
+./gradlew :core:jvmTest :app:testDebugUnitTest
 ```
 
 To check the app against a real harness, build a harness checkout and run the conformance suite:

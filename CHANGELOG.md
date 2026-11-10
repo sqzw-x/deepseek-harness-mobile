@@ -7,46 +7,345 @@ All notable changes to DSH Mobile are documented here. Format based on
 
 ### Added
 
-- **Follow streaming replies is a setting.** It is on by default and stays dynamic: the transcript
-  follows the newest row while a reply is written, stops when you scroll away, and resumes when you
-  return to the bottom. Switched off, new rows land below the viewport and the jump pill reports
-  them instead of pulling the page down. Settings → Chat.
+- **A default send mode for prompts sent while a turn is running.** Settings → Chat now offers
+  **Default send mode**, Queue or Steer, so a reader who always wants one of them no longer flips
+  the toggle in the composer's `+` sheet for every message. The choice applies to a session's
+  composer until a mode is picked there, and that per-session pick survives a later change to the
+  default; holding send still chooses the mode for one message alone. Upgrades keep Queue, so
+  nothing changes until the choice is made.
 
-- **Workspaces in the chat list preview their newest five sessions** instead of unfolding every
-  session at once. The rest sit behind a **Show all N** row under the preview, and **Show less**
-  puts them back away. A workspace that holds the session you are reading always keeps that
-  session visible, so opening the drawer mid-run never hides where you are.
+## [0.20.0] - 2026-11-09
 
-### Changed
+### Added
 
-- **The changed-files card starts folded.** A turn that touched a dozen files ended with a dozen
-  pills stacked over the reply, which is the part you were still reading. The card now shows only
-  the count, and a tap opens the list; the files are one tap away and holding one still offers
-  copy-path and mention. The fold is remembered per turn, so opening one turn's list does not open
-  the next.
-
-- **A turn's steps fold into one row under its prompt.** Collapsed, a step still costs a row, so a
-  turn that thinks, reads a few files, thinks again and then answers left a stack of headers between
-  the question and the reply. Everything the turn did before the message it settled on now sits
-  behind a single "Process · N steps" row: prompt, folded process, answer. Tapping it opens the
-  reasoning panels and tool groups as they were. Turns that have not answered yet — and the turn
-  currently running — are left expanded, because their steps are the progress you are watching.
+- **Pull down in Sessions to reload the list.** The drawer now answers a downward pull at the top
+  of the list with a small ring that fills under your finger; past the latch it ticks, and letting
+  go re-reads the session list from the harness. While the read runs the ring becomes a spinner, and
+  when it lands the spinner is replaced by a check that pops in before the whole pill springs away.
+  A pull that fails says so in the drawer instead of leaving a banner on the chat behind it. The
+  same read is in the overflow menu and as a screen-reader action on the list, since a pull is not
+  something TalkBack can perform.
 
 ### Fixed
 
-- **A long reply no longer drags the page while you read it.** The transcript is a reversed list,
-  so the newest row is the layout anchor. Scrolled up *inside* a reply taller than the screen the
-  anchor was still that row, and every chunk grew it away from its fixed bottom edge — the text
-  under your eyes slid toward the newest line until the reply settled. The transcript now holds the
-  rows where you left them while following is off, and catches up in one step when you return to
-  the bottom.
+- **Sessions started or renamed on the computer now show up in the drawer without reconnecting.** A
+  session you began in the desktop app, or with `dsh` in a terminal, stayed out of the Sessions
+  drawer until the app reconnected, and a rename made there never showed at all. The app only noticed
+  a first message in the chat you had open. It now picks it up for every session, and the drawer also
+  checks again when you open it, when you come back to the app, and every so often while it stays
+  open. Those checks are spaced out and quiet, so they do not add load on the harness or show an
+  error banner if one fails.
 
-- **Every question in a session notifies again.** Answering one `ask_user_question` prompt used to
-  silence the next question in the same session. The notification dedupe key was built from the
-  session and the request's sequence number, which is 0 for every question, so the second and later
-  questions looked like replays of the first and were dropped. The key now uses the request's own
-  id: each new question notifies, and a reconnect that re-delivers a question you have already seen
-  stays silent. (#67)
+- **Tapping beside a dialog now closes it.** The scrim around every dialog in the app ignored taps:
+  the windows are deliberately laid out edge to edge, and the platform only reports a tap as
+  "outside" when it lands beyond the window, which it never could. The new-session picker was the
+  one people noticed. The area around the plate dismisses again, and a tap on the plate itself still
+  does not.
+
+- **The permission presets are no longer touching each other.** The three cards in the permission
+  sheet were drawn at zero offset, so their rounded corners collided and the selected card's accent
+  border ran into its neighbours. Each preset now has a gap of its own.
+
+### Changed
+
+- **The `+` sheet splits commands and skills into two catalogs.** A session can publish dozens of
+  commands and a machine can carry dozens of skills, and the sheet used to put both behind one
+  endless scroll with the search field inside it — so the field scrolled away exactly when the
+  catalog got big enough to need it. Commands and Skills are now tabs with live counts, the tabs and
+  the search stay pinned while only the list scrolls, and the attach actions and send-mode choice
+  moved to a footer bar so they no longer push the catalog off the bottom.
+
+## [0.19.2] - 2026-11-08
+
+### Added
+
+- **Groundwork for an iOS app.** The `core` module is now Kotlin Multiplatform: the wire
+  protocol, session logic and Markdown sanitizer that never needed the JVM build from
+  `commonMain` for iOS device and simulator targets too, and CI compiles them on every
+  push so shared code cannot quietly grow a JVM-only dependency. Nothing changed for the
+  Android app — same classes, same packages. There is no iOS app yet; `docs/IOS.md` is
+  the plan.
+
+## [0.19.1] - 2026-11-07
+
+This update fixes full-screen pages that slipped under the gesture bar, brings back the sessions drawer
+and drag to reorder, and makes a README in Preview look the way it does on GitHub. Haptics now play
+through the phone's vibration motor and have a place in Appearance to try them.
+
+### Added
+
+- **Markdown files look the way they do on GitHub.** A README with `<p align="center">`, `<img>`,
+  `<h1>` and `<a>` used to show raw tags in Preview. Rendered mode now draws the page with its HTML,
+  tables, task lists, strikethrough, links and headings, in your theme, light or dark. Pictures next
+  to the file load from the workspace. Source, find in file and Full preview all still work.
+
+  | Before | After |
+  |:--:|:--:|
+  | <img src="docs/images/releases/0.19.1/readme-html-before.png" width="220" alt="A README in Preview before this update, with raw HTML tags showing"> | <img src="docs/images/releases/0.19.1/readme-html-after.png" width="220" alt="The same README after this update, drawn like it is on GitHub"> |
+
+- **Pictures from the web stay off until you ask.** Opening a README should not tell another server
+  that you did, so badges and other web pictures show their alt text as a small pill. A "Show pictures
+  from the web" switch above the page turns them on for that file only.
+- **Links in a Markdown file go where you expect.** A link to another file in the workspace opens it
+  in Preview, a `#heading` link scrolls the page, and a link to a web page asks "Open this link?"
+  before it leaves the app.
+- **Haptics are played through the phone's vibration motor.** Until now every buzz was a request for
+  one of Android's touch effects, which many phones, HyperOS among them, play faintly or skip. The
+  app now plays its own effects, picked for what each phone's motor can do, and a phone with no
+  vibration motor stays quiet. They should be easier to feel on phones that did nothing before. This
+  is checked on an emulator, where the vibration log shows what the app plays. How it feels in the
+  hand has not been confirmed on a real phone yet.
+- **Haptic strength, and a place to try it.** Appearance now has Light, Normal and Strong under the
+  haptics switch, a "Try it" row (Tap, Switch, Confirm, Reject, Alert, Hold) and a small wheel to feel
+  the ticks. If the phone's own Touch feedback is off, the page says so and opens the sound settings.
+
+  <img src="docs/images/releases/0.19.1/haptics-settings.png" width="220" alt="Appearance with the haptic strength choice and the Try it row">
+
+- **Ticks for movement, like a picker wheel.** One tick per step, lighter the faster you go and
+  firmer where you stop. You get them when you drag a session or a project, move through the accent
+  color's hue strip and color area, slide across the text size or another segmented control, pinch a
+  picture back to fit or out to its largest zoom, scroll a PDF through its pages, or seek in audio and
+  video.
+
+### Changed
+
+- Dragging a session now starts with a short lift and lands with a firm click. Rows you cross in
+  between tick lightly.
+- A hint like `Moving within <project>` replaces the filter chips while you drag a session, instead of
+  floating over the first row.
+- Chat replies that carry a little HTML, such as `<b>`, `<br>`, `<kbd>`, `<a href>`, `<details>` or a
+  comment, now show bold text, line breaks, code and links instead of the tags.
+- The app now declares the `VIBRATE` permission. It is a normal permission, so Android grants it at
+  install with no prompt.
+- Reset appearance also puts the haptic strength back to Normal.
+
+### Fixed
+
+- **Full-screen pages no longer slip under the gesture bar.** On a phone with gesture navigation, the
+  Automations "New automation" button and the Terminal key row (Tab, Esc, the arrows, Ctrl C) were cut
+  off at the bottom of the screen. With three-button navigation they were off screen. Every
+  full-screen page now goes through one shared window that covers the whole display and leaves room
+  for the status bar, the navigation bar, the camera cutout and the keyboard. That covers Automations,
+  Plugins, the Workspace (Files, Preview, Terminal), Full preview and the image viewer. On Android 10
+  to 14 these pages also stopped a little short of the screen edges, and that is fixed too. A unit
+  test now fails the build if anything opens a dialog window by hand.
+
+  | Automations before | Automations after | Terminal before | Terminal after |
+  |:--:|:--:|:--:|:--:|
+  | <img src="docs/images/releases/0.19.1/automations-footer-before.png" width="160" alt="The New automation button cut off under the gesture bar"> | <img src="docs/images/releases/0.19.1/automations-footer-after.png" width="160" alt="The New automation button fully on screen"> | <img src="docs/images/releases/0.19.1/terminal-keys-before.png" width="160" alt="The terminal key row cut off at the bottom of the screen"> | <img src="docs/images/releases/0.19.1/terminal-keys-after.png" width="160" alt="The terminal key row fully on screen"> |
+
+- **The sessions drawer is no longer blank (#70).** In 0.19.0 the row of filter chips grew to fill the
+  whole drawer, which left no room for the session list or the "Start a task" bar. The count said
+  "All 3" over an empty panel, and search showed nothing for the same reason. The chips now take only
+  their own height. Thanks to thanatosolo for reporting it.
+- **Reordering works again.** A row dragged next to its only neighbour never swapped with it, and in a
+  longer list it could not reach the first or last place. Dragging a whole project in Group by project
+  did nothing at all. Both move now, and the new order is saved.
+
+  <img src="docs/images/releases/0.19.1/drawer-drag-hint.png" width="220" alt="Dragging a session in the drawer, with the Moving within hint above the list">
+
+- **Steer is always there, and never fails silently.** In the + sheet, Steer could not be picked
+  while the agent was idle, and it drew as a small tag next to the full Queue pill. It is now the
+  same full pill and can always be picked. While nothing runs, a caption says "Steering needs a
+  running turn", and pressing send in that state goes out as an ordinary queued prompt instead of a
+  refusal. The queued prompt dock offers Steer only during a turn, and the subagent sheet follows the
+  same rule.
+- The empty Automations page no longer sets a whole sentence as a three-line headline. It says "No
+  tasks yet", with the rest underneath in smaller type.
+
+### Removed
+
+- Copy link is gone from Session details. Use Export to save the session file.
+
+## [0.19.0] - 2026-11-07
+
+DSH Mobile gets a new look, a theme you can tune, a file viewer that opens far more kinds of files,
+and a sessions list you can reorder and group by project. Every sentence in the app was also
+rewritten in all 11 languages so it reads the way a person would say it.
+
+### Added
+
+- **A design of its own: "Ink".** A near-black canvas with one accent, a warm paper light scheme,
+  bundled Geist and Geist Mono type, and rounder, calmer shapes. Every screen uses it, in light and
+  dark, in all 11 languages. The app opens on a branded splash that fades into the first screen, and
+  the system splash matches it.
+- **A theme you can tune.** Settings → Appearance has Light, Dark or System; seven accent presets
+  (Ink blue, Violet, Teal, Green, Amber, Rose, Mono) and a **Custom** colour; **True black** for OLED
+  screens; an app text size (Compact, Default, Large, Larger); and a haptic feedback switch. Changes
+  apply at once, and "Reset appearance" goes back to the Ink defaults.
+- **Any colour can be the accent.** The Custom swatch opens a picker with a hue strip, a saturation
+  and brightness area, a hex field (`#RRGGBB` or `RRGGBB`) and quick picks. It previews the accent in
+  the dark and light schemes side by side before anything is saved. The app adjusts the lightness
+  behind the scenes so text on the accent, and the accent itself, stay readable on both canvases.
+- **Haptics and motion that match.** Presses tick, switches flip, confirmations and rejections have
+  their own feel, and a hold is felt before its menu opens. All of it follows the haptic switch.
+  Screens, sheets, buttons and rows move on shared curves, and the app respects the system "Remove
+  animations" setting.
+- **New screens from the design.** A full-screen Connecting screen with named stages, cancel and
+  retry; a Connection lost screen with the attempt count; a searchable workspace with a Files,
+  Preview and Terminal top bar; a background jobs sheet with a live timer; and automations, plugins,
+  archive and the model, permission, preset, subagent, history and command sheets rebuilt in the
+  new look.
+- **The pairing scanner is a camera screen.** "Scan QR code" opens a full-screen viewfinder with a
+  flashlight toggle and **Choose a photo**, which reads the code from a screenshot or a picture of
+  the laptop screen. When the camera cannot be used, the sheet says why (permission refused, blocked
+  in Settings, no camera, camera busy) and offers the one action that fixes it. Typing the
+  eight-digit code still works.
+- **Drag sessions into the order you want.** In Manual order, every session you can move has a grip
+  at the end of its row. Drag it: the row lifts, the others slide aside, the list scrolls near the
+  edges, and you feel a tick on pick-up, on each place you cross and on drop. A session can only
+  move within its own project, so rows from other projects dim while you drag. The move is sent to
+  the harness and rolls back with a message if the harness refuses it. Pinned rows have no grip,
+  subagents travel with their parent, and TalkBack gets **Move up** and **Move down**.
+- **Group by project.** The sort menu now offers Manual order, Sort by last update and **Group by
+  project**. Each project sits under a header with a session count that you can fold shut, and
+  sessions in no project go under **Other**. Projects and the sessions inside them can be dragged
+  the same way. Folded groups and your order are remembered per harness.
+- **Projects preview their newest five sessions.** The rest sit behind **Show all N**, and **Show
+  less** puts them away. A project that holds the session you are reading always keeps it visible.
+- **Follow streaming replies is a setting.** On by default: the transcript follows the newest row
+  while a reply is written, stops when you scroll away, and resumes when you return to the bottom.
+  Switched off, new rows land below the viewport and the jump pill counts them. Settings → Chat.
+- **Preview is a full file viewer.** The header shows the file name, folder, size and type. **Full
+  preview** opens the file on its own screen. Text gets line numbers, wrapping and **find in file**
+  with a match count and highlighting. Pictures pinch, pan and double-tap to zoom. PDFs scroll page
+  by page with zoom. Long text files load more as you reach the end.
+- **Save a copy of any file to the phone.** It goes through the system file picker, and a file too
+  big to preview can still be saved.
+- **Many more kinds of file open in Preview.** CSV and TSV as a table. JSON, JSON Lines and GeoJSON
+  pretty-printed or as a collapsible tree, with the spot of any error. Jupyter notebooks with their
+  outputs. Diffs and patches. SVG, HTML and Markdown with a Rendered / Source toggle. More picture
+  formats (BMP, ICO, animated GIF and WebP, plus HEIC and AVIF where the phone can decode them).
+  Video and audio with play, pause and a seek bar. The contents of zip-based files (zip, jar, apk,
+  docx and more), font specimens, and a hex dump for any other binary file. A file with no extension
+  is recognised by its first bytes. YAML, TOML, INI, Dockerfile, Makefile, SQL, XML, HTML and shell
+  files get syntax colour.
+- **Clearer loading and error states in Preview.** A file shows a skeleton while it loads. A failure
+  says what the harness answered and offers Retry, and a file that is too big offers Save a copy.
+  Each open file remembers its scroll position and view when you switch tabs.
+- **`mock-harness --viewer-fixtures`** serves sample files for trying the viewer by hand.
+
+### Changed
+
+- **One search field everywhere.** The chat list, the model, history and command pickers, the
+  reference picker, Plugins, Automations, Archived sessions, the plugin list in Settings and the
+  workspace file explorer now share one search field: a hairline that turns accent on focus, a
+  search glyph, and a clear button that appears with the first character and keeps the keyboard up.
+  The Search key closes the keyboard. In the file explorer, opening search raises the keyboard, Back
+  closes it and forgets the query, and the filter also applies to the "Changed this session" card.
+- **The words in the app read like a person wrote them.** Every on-screen sentence was rewritten in
+  all 11 languages: plain wording, no error codes or developer terms, and no em dashes. A group of
+  sessions in the chat list is now called a **project**, while the Files, Preview and Terminal panel
+  keeps the name Workspace. "Refuse" is now "Don't allow", plugin states read Loaded and Not loaded,
+  and speed figures are left out until there is something to show instead of a dash.
+- **The light theme is warm paper, not white.** Status colours were re-checked so they stay readable
+  at small sizes, and the window, splash, status bar and launch icon follow the scheme instead of
+  the device's.
+- **Controls follow one shape and size system.** Buttons are 44dp, icon buttons keep a 48dp target,
+  filter chips and inputs share the same corner and height, and type moved to one scale, with Geist
+  for Latin text and the system font carrying the other languages. Inputs everywhere (rename, new
+  project, queue and goal edits, feedback, question answers) are now the same plate as the search
+  and connect fields.
+- **The top bars have more room.** The model selector in the chat header shows the whole model name
+  again, with the status pill moved to the session title row. The model chip, tabs, preset chip and
+  subagent tag size themselves, and the tabs scroll inside their own box so the workspace button
+  is never squeezed out at large text sizes. The sessions list header uses one family of icon
+  buttons, and its sort menu checks the order in use.
+- **The Preview toolbar fits a narrow phone.** Refresh, copy path and close sit behind an overflow
+  menu, and a text file over the preview limit shows its first part with a note instead of failing.
+- **The changed-files card starts folded.** It shows only the count, and a tap opens the list. The
+  fold is remembered per turn.
+- **A turn's steps fold into one row under its prompt.** Reasoning and tool groups sit behind a
+  single "Process" row with the step count, and tapping it opens them as before. A turn that has not
+  answered yet, and the turn running now, stay expanded.
+- **A pairing QR that names more than one address is tried in order.** A relay with both Ethernet
+  and Wi-Fi lists every address it can be reached at, and the app now moves on to the next one when
+  a failure says nothing about the code. A refused code, a lockout or a key mismatch is not retried
+  elsewhere.
+- **"Forget remembered harnesses" and "Forget which session to open" ask first.** The first removes
+  every saved harness and its relay pairing, so the dialog says how many harnesses that is.
+- **Sheets slide away before acting on a pick.** The permission picker used to vanish mid-animation
+  while the next dialog opened over it. It now hides first, and a second tap during the slide is
+  ignored.
+
+### Removed
+
+- **"Open on host" is gone from Preview.**
+
+### Fixed
+
+- **The "Needs you" card no longer approves a command you cannot read.** It shows up to four lines
+  of the command and offers Review instead of a one-tap Approve when the command is cut off. A
+  refused or unsent approval is now reported.
+- **A long approval can no longer push Allow and Reject off the screen.** The command scrolls inside
+  a capped area.
+- **The Archived filter offers Restore and says the right thing.** An empty archive says "Nothing
+  archived yet", and a failed restore says so.
+- **The model chip no longer shimmers forever** when no session is open.
+- **Buttons in Session Details now answer you.** Rename, Fork, Archive, Stop job, queue removal, the
+  goal controls, the plan switch and Export reported failures on a banner hidden behind the open
+  panel, and most said nothing on success. Failures and successes now show in the panel in plain
+  words. Fork offers to open the copy, the plan switch moves at once and goes back with a message if
+  refused, and a failed save no longer leaves an empty file. Pause, Edit and Clear for a goal sit
+  right under the goal.
+- **Subagent rows in Session Details open the subagent.** Ones with no transcript on the phone are
+  no longer tappable.
+- **Cancel on the Connecting screen really cancels.** A late result is dropped instead of connecting
+  an app you backed out of.
+- **Coming back to the Chat tab keeps your place.** An old send is not replayed.
+- **Sheets rise above the keyboard.** This covers the sign-in token field, the subagent follow-up
+  box, the plugin filter and the command search.
+- **The keyboard stays up after you send.**
+- **Picking a command or skill from the + sheet keeps what you typed.** "Chat about it" on a plan no
+  longer clears the composer either.
+- **The feedback dialog can always be closed, and speaks plainly.**
+- **A thinking panel you opened stays open when the reply finishes.** So does the copy, branch and
+  rate row.
+- **Tapping the model you already use no longer resets its reasoning effort.** The picker shows a
+  spinner while a switch is on its way and says so when the harness refuses.
+- **A model picked in the app shows up in the app.** DeepSeek Harness 0.2.2 changed how live state
+  reaches the phone, so a model change on the harness never reached the model chip. The app now
+  reads both formats, which also restores live updates for permissions, todos, goal, plan, queue,
+  subagents, preset and question state.
+- **The permission chip no longer freezes after you change the permission.** Picking the preset
+  already in force just closes the sheet, and a switch ends when it fails, when the harness reports
+  a new value, after four seconds with a short "the harness didn't confirm" notice, or when you
+  leave the session.
+- **Files open from the workspace root again.**
+- **Automations can be saved and deleted again on DeepSeek Harness 0.2.2.** Tasks the agent creates
+  for a session are listed under that session, recurring-rule tasks show their rule, and opening
+  "Change timing" on one no longer crashes the app. Saving and deleting automations now needs a
+  0.2.2 harness.
+- **A question survives an option the app does not know.** One unknown kind of question used to
+  hide the card and leave the turn blocked until it timed out.
+- **Images send again on a current harness.**
+- **Agent chats open again on DeepSeek Harness 0.2.2.** A continuable agent keeps its composer and
+  Stop, and a one-shot agent opens read-only.
+- **Every question in a session notifies again.** Answering one used to silence the next question
+  in the same session. (#67)
+- **Nothing hides behind the system bars any more.** The workspace panel (including the terminal
+  key row), automations, plugins and the image viewer draw edge to edge, and dialogs keep their
+  OK and Cancel buttons on screen when the content is long or the keyboard is up.
+- **Thai and other stacked scripts no longer lose the tops of their letters.**
+- **The commands sheet scrolls as one surface.** Command rows lead with the real `/name`.
+- **The composer keeps its text visible with attachments.**
+- **A long reply no longer drags the page while you read it.** The transcript holds still while
+  following is off and catches up in one step when you return to the bottom.
+- **The scanner copes with turning the phone and with a refused camera.** The viewfinder is sized
+  from the space left, the sheet survives rotation, and a refusal is named on screen instead of
+  looking like a dead button.
+- **Several layout problems were fixed.** The Sessions filter row scrolls (its Archived chip used to
+  be clipped), file preview wraps long code lines, the workspace tree indents one step per depth,
+  and bottom bars and composers sit above the navigation inset.
+- **Read cards line up.** A line number stays beside its own line when long lines wrap.
+- **Small controls have full-size touch targets.** The remove mark on an attachment, the + and @
+  buttons beside the composer and the menu on a queued message are 48dp to hit.
+- **Tool cards speak your language.** "killed by", "exit", file, line and result counts and similar
+  labels were English everywhere, and they use proper plural forms now.
+- **Small grey text is readable in the light theme.**
+- **Answers you type into a question are no longer kept forever.**
+- **The job output sheet lets you read.** A log that is streaming only follows while you are at the
+  bottom, and **Jump to latest** appears when you scroll up.
 
 ## [0.18.0] - 2026-10-21
 
@@ -1569,3 +1868,4 @@ Initial release.
 - Localization: en, zh-Hans, hi, es, fr, ar, bn, pt, ru, ur, th (RTL aware).
 - Harness-side LAN companion (`harness/`) and developer tooling
   (`mock-harness/`, `tools/capture/`).
+
