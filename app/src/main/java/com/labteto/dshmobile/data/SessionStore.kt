@@ -306,6 +306,26 @@ internal fun nextHasMore(freshCount: Int, hostHasMore: Boolean, overDelivered: B
 private const val INBOX_PROJECTION = "inbox"
 
 /** Projection key carrying a session's agent preset; harness rows have no top-level field for it. */
+/**
+ * The sessions with a running descendant: the parents whose row should read as running.
+ *
+ * The host reports activity on the session that has the turn, and a subagent's turn is its own
+ * row's, so the parent that spawned it stays idle in `session/list` while the work happens. The
+ * desktop rolls that fact up the chain; this is the same walk. Cycles are guarded because the
+ * lineage is the host's, and a malformed one must not spin.
+ */
+internal fun ancestorsOfRunning(sessions: Map<String, SessionRow>): Set<String> {
+    val busy = HashSet<String>()
+    for (row in sessions.values) {
+        if (!row.running) continue
+        var cursor = row.parentSessionId
+        while (cursor != null && busy.add(cursor)) cursor = sessions[cursor]?.parentSessionId
+    }
+    // A walk stops at a session already in the set: everything above it was collected by the walk
+    // that put it there, so the chain is complete without visiting it twice.
+    return busy
+}
+
 private const val AGENT_PRESET_PROJECTION = "agentPreset"
 
 /** Projection key carrying a parent's direct subagents; `subagents/list` was removed in 0.1.7. */
@@ -1642,10 +1662,17 @@ class SessionStore @Inject constructor(
     }
 
     private fun emitSessionsLocked() {
+        // A parent counts as running while any of its subagents does: the host reports activity on
+        // the child's own row, so a parent that is waiting on three agents would otherwise read as
+        // idle — here and in every surface fed by this list.
+        val busyAncestors = ancestorsOfRunning(sessionRows)
         val rows = sessionRows.values.map { row ->
-            row.copy(pendingInteraction = pendingInteractionOf(
-                pendingKinds[row.sessionId].orEmpty() + modernQuestionKinds[row.sessionId].orEmpty(),
-            ))
+            row.copy(
+                running = row.running || row.sessionId in busyAncestors,
+                pendingInteraction = pendingInteractionOf(
+                    pendingKinds[row.sessionId].orEmpty() + modernQuestionKinds[row.sessionId].orEmpty(),
+                ),
+            )
         }
         _sessions.value = rows
     }
