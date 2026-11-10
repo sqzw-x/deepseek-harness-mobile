@@ -2843,7 +2843,19 @@ class SessionStore @Inject constructor(
         }
     }
 
-    fun closeSubagentTranscript() { childFollowJob?.cancel(); childFollowJob = null }
+    /**
+     * Collapse the open child: its follow stops and its transcript leaves the sheet.
+     *
+     * The state has to go with the job. Cancelling alone left [subagentConversation] in place, so
+     * tapping the open card to close it cleared and reopened the same transcript in one frame — the
+     * card flashed shut and came straight back.
+     */
+    fun closeSubagentTranscript() {
+        childFollowJob?.cancel()
+        childFollowJob = null
+        _subagentConversation.value = null
+        _subagentMode.value = null
+    }
 
     suspend fun createWorkspace(path: String) {
         val api = apiOrNull() ?: return

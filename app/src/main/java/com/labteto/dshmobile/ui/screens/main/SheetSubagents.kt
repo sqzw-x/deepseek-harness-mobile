@@ -166,7 +166,11 @@ internal fun SubagentsSheet(
                     onClick = {
                         if (id != null) {
                             haptics.selection()
-                            scope.launch { store.openSubagentTranscript(id) }
+                            // The card is the toggle: tapping the open one closes it. Opening
+                            // unconditionally meant a second tap cleared the transcript and started
+                            // the same follow again, which read as "the chevron does nothing".
+                            if (selected) store.closeSubagentTranscript()
+                            else scope.launch { store.openSubagentTranscript(id) }
                         }
                     },
                 ) {
