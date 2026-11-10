@@ -309,10 +309,13 @@ fun ChatListDrawer(
         workspaces.filter { workspace -> workspace.sessionIds.any { it in openPath } }.map { it.workspaceId }
     }
     LaunchedEffect(hostKey, currentSessionId, openPath, targetProjects) {
-        openPath.forEach { collapsed.remove(it) }
+        // The session being opened is skipped: its own tree is the reader's to fold, and clearing
+        // the entry here would throw away the expansion they just made.
+        openPath.forEach { if (it != currentSessionId) collapsed.remove(it) }
         targetProjects.forEach { collapsedNow[it] = false }
     }
-    fun isExpanded(sessionId: String): Boolean = collapsed[sessionId]?.not() ?: (sessionId in openPath)
+    fun isExpanded(sessionId: String): Boolean =
+        treeRowExpanded(sessionId, collapsed[sessionId], currentSessionId, openPath)
     fun toggleChildren(sessionId: String) {
         collapsed[sessionId] = isExpanded(sessionId)
     }

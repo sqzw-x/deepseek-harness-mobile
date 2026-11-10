@@ -41,6 +41,20 @@ internal fun sessionOpenPath(current: String?, sessions: Map<String, SessionRow>
     while (cursor != null && add(cursor)) cursor = sessions[cursor]?.parentSessionId
 }
 
+/**
+ * Whether a row in the session tree draws its subagents.
+ *
+ * A fold the reader made wins. Otherwise only the lineage *below* the open session is open: the
+ * session on screen is not, because opening a session would otherwise unfold its own tree, and
+ * every switch would change what the drawer shows without a tap on the triangle.
+ */
+internal fun treeRowExpanded(
+    sessionId: String,
+    folded: Boolean?,
+    current: String?,
+    lineage: Set<String>,
+): Boolean = folded?.not() ?: (sessionId != current && sessionId in lineage)
+
 /** Includes an ancestor when a filter matches a child; guards malformed lineage cycles. */
 internal fun sessionTreeMatches(
     root: SessionRow,

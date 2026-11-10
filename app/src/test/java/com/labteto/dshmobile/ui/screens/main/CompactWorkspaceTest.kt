@@ -2,6 +2,8 @@ package com.labteto.dshmobile.ui.screens.main
 
 import com.labteto.dshmobile.data.SessionRow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CompactWorkspaceTest {
@@ -137,5 +139,15 @@ class CompactWorkspaceTest {
     @Test fun `automatic attention is bounded to first fifty roots`() {
         val rows = rows(60).map { if (it.sessionId == "s51") it.copy(running = true) else it }
         assertEquals(rows.take(5), compactWorkspaceWindow(rows, 0, emptySet()).rows)
+    }
+
+    @Test fun `opening a session does not unfold its own tree`() {
+        val lineage = setOf("child", "s9")
+        // The child on screen stays as it was; its parent is open so the row is reachable.
+        assertFalse(treeRowExpanded("child", null, "child", lineage))
+        assertTrue(treeRowExpanded("s9", null, "child", lineage))
+        // A fold the reader made wins in both cases.
+        assertTrue(treeRowExpanded("child", false, "child", lineage))
+        assertFalse(treeRowExpanded("s9", true, "child", lineage))
     }
 }
