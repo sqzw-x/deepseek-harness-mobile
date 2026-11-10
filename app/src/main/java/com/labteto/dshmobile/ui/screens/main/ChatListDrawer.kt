@@ -289,7 +289,11 @@ fun ChatListDrawer(
 
     // Blank sessions are scratch space the harness reuses; subagent transcripts belong under their
     // parent, not as top-level rows.
-    val listable = sessions.filter { it.sessionId !in archivedIds && !it.blank }
+    // Not archived, not blank, and not a subagent an archived ancestor took out of the list with it:
+    // the harness archives what was named, so a parent's children keep no archived marker of their
+    // own and would otherwise surface as top-level rows — in the "other" block, since no workspace
+    // claims them.
+    val listable = remember(sessions, archivedIds) { visibleSessions(sessions, archivedIds) }
     val sessionsById = sessions.associateBy { it.sessionId }
     val archivedSessions = sessions.filter { it.sessionId in archivedIds }
 
