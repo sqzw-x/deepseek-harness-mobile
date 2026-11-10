@@ -249,7 +249,12 @@ internal fun Composer(
                 Modifier.padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(DsSpacing.small),
             ) {
+                // The editor's column is the one part that gives way when the draft, the
+                // attachment strip and the action row do not fit under the composer's cap. Without
+                // a weight the field was measured first at its full eight lines and the row under
+                // it was squeezed to a strip.
                 Column(
+                    modifier = Modifier.weight(1f, fill = false),
                     verticalArrangement = Arrangement.spacedBy(DsSpacing.small),
                 ) {
                 if (references.isNotEmpty()) {
@@ -298,6 +303,7 @@ internal fun Composer(
                     // Measure the controls first, then give the editor the remaining height. With
                     // unbounded height, omit weight so the editor keeps its natural line height.
                     modifier = Modifier
+                        .weight(1f, fill = false)
                         .heightIn(min = 48.dp)
                         .fillMaxWidth()
                         .focusRequester(fieldFocus)
