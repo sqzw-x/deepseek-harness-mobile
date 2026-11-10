@@ -97,6 +97,11 @@ class NotificationObserver @Inject constructor(
         if (started) return
         started = true
         notifications.ensureChannels()
+        // Turn and goal events live on each session's own follow stream, and this observer cannot
+        // subscribe to those: one per session would resume agents nobody is looking at. The store
+        // owns them and hands them over here. Nothing ever assigned this hook, which is why goal
+        // notifications were silent and a turn already running at (re)connect finished unnoticed.
+        store.notificationSink = ::onSessionEvent
         trackAppForeground()
         clearReadNotifications()
         scope.launch {
@@ -242,9 +247,12 @@ class NotificationObserver @Inject constructor(
      */
     fun onSessionEvent(sessionId: String, envelope: SessionEventEnvelope) {
         when (envelope.type) {
+            // Remembered so the host's running→idle transition can be recognised even for a turn
+            // that had already started when this process connected.
             "turn/start" -> classifier.markSessionRunning(sessionId)
-            "turn/end", "goal/change" ->
-                classifier.classifyEvent(sessionId, envelope)?.let { maybeNotify(it) }
+            // `turn/end` is deliberately absent: the host's `api-session/status` emit already turns
+            // that transition into a notification, and forwarding both posted two per turn.
+            "goal/change" -> classifier.classifyEvent(sessionId, envelope)?.let { maybeNotify(it) }
         }
     }
 
