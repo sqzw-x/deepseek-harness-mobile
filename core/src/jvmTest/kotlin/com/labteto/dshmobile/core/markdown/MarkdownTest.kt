@@ -153,7 +153,17 @@ class MarkdownTest {
     fun blockquoteCollectsConsecutiveLines() {
         val blocks = parseMarkdown("> one\n> two\n\npara")
         val quote = blocks[0] as MdBlock.Blockquote
-        assertEquals(listOf("one", "two"), quote.lines)
+        val paragraph = quote.blocks.single() as MdBlock.Paragraph
+        assertEquals(listOf("one", "two"), paragraph.lines)
+    }
+
+    @Test
+    fun blockquoteCarriesDisplayMathAndNestedQuotes() {
+        val blocks = parseMarkdown("> $$\n> x^2\n> $$\n>\n> > inner")
+        val quote = blocks[0] as MdBlock.Blockquote
+        assertEquals("x^2", (quote.blocks[0] as MdBlock.Math).tex)
+        val nested = quote.blocks[1] as MdBlock.Blockquote
+        assertEquals("inner", ((nested.blocks.single() as MdBlock.Paragraph).lines).single())
     }
 
     // ---- Task lists -----------------------------------------------------------
@@ -269,5 +279,25 @@ class MarkdownTest {
     fun safeHttpUrlRejectsEmptyAndWhitespace() {
         assertNull(safeHttpUrl(""))
         assertNull(safeHttpUrl("   "))
+    }
+
+    // ---- Tables and math ------------------------------------------------------
+
+    @Test
+    fun tableCellKeepsPipeInsideMathAndCode() {
+        val blocks = parseMarkdown(
+            "| a | b |\n|---|---|\n| $\\left| x \\right| \\le 1$ | `a|b` |",
+        )
+        val table = blocks[0] as MdBlock.Table
+        val row = table.rows.single()
+        assertEquals("$\\left| x \\right| \\le 1$", row[0])
+        assertEquals("`a|b`", row[1])
+    }
+
+    @Test
+    fun tableRowDropsCellsPastTheHeader() {
+        val blocks = parseMarkdown("| a | b |\n|---|---|\n| 1 | 2 | 3 |")
+        val table = blocks[0] as MdBlock.Table
+        assertEquals(listOf("1", "2"), table.rows.single())
     }
 }

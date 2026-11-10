@@ -32,7 +32,11 @@ sealed interface MdBlock {
         val checked: Boolean? = null,
         val ordered: Boolean = false,
     ) : MdBlock
-    data class Blockquote(val lines: List<String>) : MdBlock
+    /**
+     * A quote holds blocks, not lines: display math, fenced code and tables inside one would
+     * otherwise be flattened into styled text. Nested quotes fall out of the same parse.
+     */
+    data class Blockquote(val blocks: List<MdBlock>) : MdBlock
     data class Code(val lang: String?, val code: String) : MdBlock
     object HorizontalRule : MdBlock
 
@@ -139,7 +143,7 @@ fun parseMarkdown(markdown: String): List<MdBlock> {
                     quote += lines[i].trim().removePrefix(">").trim()
                     i++
                 }
-                parsed += MdBlock.Blockquote(quote)
+                parsed += MdBlock.Blockquote(parseMarkdown(quote.joinToString("\n")))
             }
             trimmed.startsWith("|") && lines.getOrNull(i + 1)?.let { isTableSeparator(it) } == true -> {
                 val headerCells = splitTableRow(trimmed)
@@ -259,16 +263,60 @@ private fun isTableSeparator(line: String): Boolean {
 
 /**
  * Splits `| a | b | c |` into the three cell strings, trimming each.
- * [expectedCount] pads short rows with empty cells so every row lines up
- * under the header (a harness may truncate trailing empty cells).
+ *
+ * A `|` that belongs to the cell's own content is not a separator: `\\|` is an escaped pipe, and a
+ * pipe inside `$…$` or a backtick span is part of the formula or the code — a matrix or `\\left|`
+ * in a cell would otherwise split the row into columns that do not exist.
+ *
+ * [expectedCount] pads short rows with empty cells so every row lines up under the header (a
+ * harness may truncate trailing empty cells), and drops the ones past it, which is what the GFM
+ * tables every other client draws do.
  */
 private fun splitTableRow(line: String, expectedCount: Int? = null): List<String> {
     val trimmed = line.trim().removePrefix("|").removeSuffix("|")
-    var cells = trimmed.split("|").map { it.trim() }
-    if (expectedCount != null && cells.size < expectedCount) {
-        cells = cells + List(expectedCount - cells.size) { "" }
+    val cells = mutableListOf<String>()
+    val cell = StringBuilder()
+    var math = false
+    var code = false
+    var i = 0
+    while (i < trimmed.length) {
+        val c = trimmed[i]
+        val next = trimmed.getOrNull(i + 1)
+        when {
+            c == '\\' && next == '|' -> {
+                cell.append('|')
+                i += 2
+            }
+            c == '`' -> {
+                code = !code
+                cell.append(c)
+                i++
+            }
+            c == '$' && !code -> {
+                math = !math
+                cell.append(c)
+                i += if (next == '$') 2 else 1
+                if (next == '$') cell.append('$')
+            }
+            c == '|' && !math && !code -> {
+                cells += cell.toString().trim()
+                cell.clear()
+                i++
+            }
+            else -> {
+                cell.append(c)
+                i++
+            }
+        }
     }
-    return cells
+    cells += cell.toString().trim()
+    val padded = when {
+        expectedCount == null -> cells
+        cells.size < expectedCount -> cells + List(expectedCount - cells.size) { "" }
+        cells.size > expectedCount -> cells.take(expectedCount)
+        else -> cells
+    }
+    return padded
 }
 
 // ---- Inline parser -------------------------------------------------------------

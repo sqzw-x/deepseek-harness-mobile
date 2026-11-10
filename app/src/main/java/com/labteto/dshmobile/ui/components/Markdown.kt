@@ -10,10 +10,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -34,6 +32,9 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -111,7 +112,6 @@ fun isFolderReference(path: String): Boolean {
  */
 @Composable
 fun MarkdownText(text: String, modifier: Modifier = Modifier, streamingCaret: Boolean = false) {
-    val colors = DsTheme.colors
     // The parser lives in :core (pure JVM) so it is unit-testable and survives a renderer rewrite.
     // List items arrive one per block, so runs of them are regrouped here: the renderer needs the
     // whole list at once to number an ordered list and to keep the markers in one column.
@@ -122,41 +122,51 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier, streamingCaret: Bo
         RenderStats.markdown { groupListBlocks(parseMarkdown(inlineHtmlToMarkdown(text))) }
     }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        blocks.forEach { render ->
-            when (render) {
-                is RenderBlock.ListRun -> MdListBlock(render)
-                is RenderBlock.Of -> when (val block = render.block) {
-                is MdBlock.Heading -> {
-                    val style = when (block.level) {
-                        1 -> DsType.mdH1
-                        2 -> DsType.mdH2
-                        3 -> DsType.mdH3
-                        else -> DsType.mdH4
-                    }
-                    InlineMarkdown(block.text, style.copy(color = colors.labelPrimary), Modifier.padding(top = 10.dp))
-                }
-                // A paragraph's line breaks are kept, as the web client keeps them: a model that
-                // lists one file per line meant one file per line, and joining with a space made
-                // `README.md src` out of two separate names.
-                is MdBlock.Paragraph -> InlineMarkdown(
-                    block.lines.joinToString("\n"),
-                    DsType.mdBody.copy(color = colors.labelPrimary),
-                    Modifier.fillMaxWidth(),
-                )
-                                is MdBlock.Blockquote -> MdBlockquote(block)
-                is MdBlock.Code -> CodeBlock(block.lang, block.code)
-                is MdBlock.Math -> MathBlock(block.tex)
-                is MdBlock.HorizontalRule -> HorizontalRuleLine()
-                    is MdBlock.Table -> MdTableBlock(block)
-                    // Grouped away above; the parser never hands a bare item to the renderer.
-                    is MdBlock.ListItem -> Unit
-                }
-            }
-        }
+        blocks.forEach { RenderBlockView(it) }
         // The design's live-write signal: a small accent block that blinks while a reply is being
         // written and stops the moment it settles. Kept out of the text itself so it never leaks
         // into copy/selection.
         if (streamingCaret) StreamingCaret()
+    }
+}
+
+/**
+ * One parsed block, drawn.
+ *
+ * Quoted content goes through this too: a quote holds blocks now, so a `$$…$$` inside one renders
+ * as a formula instead of a line of styled text.
+ */
+@Composable
+private fun RenderBlockView(render: RenderBlock) {
+    val colors = DsTheme.colors
+    when (render) {
+        is RenderBlock.ListRun -> MdListBlock(render)
+        is RenderBlock.Of -> when (val block = render.block) {
+            is MdBlock.Heading -> {
+                val style = when (block.level) {
+                    1 -> DsType.mdH1
+                    2 -> DsType.mdH2
+                    3 -> DsType.mdH3
+                    else -> DsType.mdH4
+                }
+                InlineMarkdown(block.text, style.copy(color = colors.labelPrimary), Modifier.padding(top = 10.dp))
+            }
+            // A paragraph's line breaks are kept, as the web client keeps them: a model that lists
+            // one file per line meant one file per line, and joining with a space made
+            // `README.md src` out of two separate names.
+            is MdBlock.Paragraph -> InlineMarkdown(
+                block.lines.joinToString("\n"),
+                DsType.mdBody.copy(color = colors.labelPrimary),
+                Modifier.fillMaxWidth(),
+            )
+            is MdBlock.Blockquote -> MdBlockquote(block)
+            is MdBlock.Code -> CodeBlock(block.lang, block.code)
+            is MdBlock.Math -> MathBlock(block.tex)
+            is MdBlock.HorizontalRule -> HorizontalRuleLine()
+            is MdBlock.Table -> MdTableBlock(block)
+            // Grouped away above; the parser never hands a bare item to the renderer.
+            is MdBlock.ListItem -> Unit
+        }
     }
 }
 
@@ -611,20 +621,27 @@ private fun TableCell(
 @Composable
 private fun MdBlockquote(block: MdBlock.Blockquote) {
     val colors = DsTheme.colors
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(vertical = 2.dp)) {
-        Box(
-            Modifier
-                .width(2.dp)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(1.dp))
-                .background(colors.citation),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            block.lines.forEach { line ->
-                InlineMarkdown(line, DsType.mdSmall.copy(color = colors.labelTertiary), Modifier.fillMaxWidth())
+    // The quote's own blocks, grouped the way the transcript's are, so a list inside a quote still
+    // numbers as one list.
+    val nested = remember(block) { groupListBlocks(block.blocks) }
+    // The bar is drawn along this node's left edge with the content padded away from it, rather
+    // than laid out beside the content. A quote can hold a formula now, and the intrinsic-height
+    // Row this used to be cannot measure one: a horizontally scrolling row reports no intrinsics,
+    // so a `$$…$$` in a quote would fail to lay out at all.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawRect(
+                    color = colors.citation,
+                    topLeft = Offset.Zero,
+                    size = Size(3.dp.toPx(), size.height),
+                )
             }
-        }
+            .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        nested.forEach { RenderBlockView(it) }
     }
 }
 
