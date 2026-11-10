@@ -38,7 +38,8 @@ class VisibleSessionsTest {
             row("c", parent = "p", origin = "subagent"),
             row("keep"),
         )
-        assertEquals(listOf("p", "keep"), visibleSessions(sessions, setOf("p")).map { it.sessionId })
+        // The archived parent goes with its child, and only the unrelated row is left.
+        assertEquals(listOf("keep"), visibleSessions(sessions, setOf("p")).map { it.sessionId })
     }
 
     @Test fun `a subagent stays while its parent is on the list`() {
@@ -53,7 +54,9 @@ class VisibleSessionsTest {
             row("c", parent = "middle", origin = "subagent"),
         )
         assertEquals(emptyList<String>(), visibleSessions(sessions, setOf("grand")).map { it.sessionId })
-        assertEquals(listOf("grand", "middle", "c"), visibleSessions(sessions, emptySet()).map { it.sessionId })
+        // With nothing archived the blank middle is still not a row of its own — the list never
+        // shows a session nobody has prompted.
+        assertEquals(listOf("grand", "c"), visibleSessions(sessions, emptySet()).map { it.sessionId })
     }
 
     @Test fun `an archived row itself is not shown`() {
