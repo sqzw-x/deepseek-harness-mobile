@@ -13,7 +13,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,6 +79,9 @@ import com.labteto.dshmobile.core.session.PlanModeNode
 import com.labteto.dshmobile.core.session.QueueItem
 import com.labteto.dshmobile.core.session.WorkflowNode
 import com.labteto.dshmobile.core.session.effectiveWorkingDirectory
+import com.labteto.dshmobile.core.usage.limitHit
+import com.labteto.dshmobile.core.usage.routeLabel
+import com.labteto.dshmobile.core.usage.tokensFromNodes
 import com.labteto.dshmobile.core.wire.dto.AgentPresetListValue
 import com.labteto.dshmobile.core.wire.dto.ContextBreakdownView
 import com.labteto.dshmobile.core.wire.dto.ContextPressureView
@@ -93,7 +96,6 @@ import com.labteto.dshmobile.core.wire.dto.SessionModelsValue
 import com.labteto.dshmobile.core.wire.dto.SessionStatsView
 import com.labteto.dshmobile.core.wire.dto.SubagentListEntry
 import com.labteto.dshmobile.core.wire.dto.TokenUsageView
-import com.labteto.dshmobile.core.wire.dto.displayPermissionPreset
 import com.labteto.dshmobile.data.ActionOutcome
 import com.labteto.dshmobile.data.ArchiveOutcome
 import com.labteto.dshmobile.data.CommandOutcome
@@ -116,7 +118,6 @@ import com.labteto.dshmobile.ui.components.MascotState
 import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.StateDotState
 import com.labteto.dshmobile.ui.components.formatDurationMs
-import com.labteto.dshmobile.ui.components.formatTokens
 import com.labteto.dshmobile.ui.components.rememberDsHaptics
 import com.labteto.dshmobile.ui.components.rememberDsToast
 import com.labteto.dshmobile.ui.rememberSessionStore
@@ -156,6 +157,11 @@ fun DetailsPanel(
     onOpenSubagent: (String) -> Unit = {},
     /** Open another session, such as the fork just made. Runs outside the panel, which is closing. */
     onOpenSession: (String) -> Unit = {},
+    /**
+     * True when the panel is a pane docked beside the chat rather than a sheet over it: square
+     * edges, and no grabber, because a docked pane is closed with its button and is not dragged.
+     */
+    docked: Boolean = false,
 ) {
     // Back is handled by MainScreen, which drags the panel closed with the predictive back gesture.
     val store = rememberSessionStore()
@@ -308,7 +314,7 @@ fun DetailsPanel(
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = colors.bgLayer2,
-            shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+            shape = if (docked) androidx.compose.ui.graphics.RectangleShape else RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
         ) {
             Row(Modifier.fillMaxSize()) {
                     // The rule on the chat side of the panel, drawn as a 1dp bar so it can sit on the
@@ -326,8 +332,9 @@ fun DetailsPanel(
                             .safeDrawingPadding(),
                     ) {
                         // A grabber reads as "this edge moves"; the panel closes by dragging toward
-                        // the chat, which is the same gesture family as a sheet pulled down.
-                        Row(
+                        // the chat, which is the same gesture family as a sheet pulled down. A docked
+                        // pane does not move, so it does not promise to.
+                        if (!docked) Row(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(top = DsSpacing.small),
@@ -408,7 +415,14 @@ fun DetailsPanel(
                                 if (conv != null) {
                                     ContextCard(breakdown, pressure, usage, stats)
 
-                                    UsageCard(quota, quotaProvider, quotaNow, onExpanded = { quotaExpanded = it }, onRefresh = { scope.launch { store.refreshQuota(quotaExpanded, recheck = true) } })
+                                    UsageCard(
+                                        quota, quotaProvider, quotaNow,
+                                        route = routeLabel(models, store.quotaSelection()),
+                                        tokens = remember(conv.nodes, usage) { usage ?: tokensFromNodes(conv.nodes) },
+                                        limit = remember(conv.nodes) { limitHit(conv.nodes) },
+                                        onExpanded = { quotaExpanded = it },
+                                        onRefresh = { scope.launch { store.refreshQuota(quotaExpanded, recheck = true) } },
+                                    )
                                     PanelSection(stringResource(R.string.ink_panel_model_permission))
                                     ModelPermissionCard(
                                         models = models,
@@ -918,10 +932,8 @@ private fun ContextCard(
                 LegendDot(stringResource(R.string.chat_context_messages), Ds.MeterMessages)
             }
         }
+        // Token totals and the cache hit rate live in the Usage card below; saying them twice in one panel is noise.
         val meta = buildList {
-            usage?.let {
-                add(stringResource(R.string.chat_stats_tokens, formatTokens(it.inputTokens), formatTokens(it.outputTokens)))
-            }
             stats?.let {
                 add(stringResource(R.string.chat_stats_timing, formatDurationMs(it.llmMs), formatDurationMs(it.toolMs)))
             }
@@ -933,14 +945,6 @@ private fun ContextCard(
                 color = colors.labelTertiary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-            )
-        }
-        usage?.cacheHitRatio?.let { ratio ->
-            Text(
-                stringResource(R.string.chat_stats_cache, (ratio * 100).toInt()),
-                style = DsType.caption11,
-                color = colors.labelCaption,
-                maxLines = 1,
             )
         }
     }
@@ -980,7 +984,7 @@ private fun ModelPermissionCard(
     val effortName = effortDisplayName(models)
     val permissionValue = permissions?.let { select ->
         val effective = pendingPermission ?: select.currentValue
-        displayPermissionPreset(effective, select.current?.name ?: effective)
+        permissionPresetLabel(effective, select.current?.name)
     }
     val permissionHint = permissions?.let { select ->
         val effective = pendingPermission ?: select.currentValue
@@ -1287,6 +1291,10 @@ private fun GoalRow(goal: GoalSnapshot?, store: SessionStore, onFailed: (String?
                 goal.objective,
                 style = DsType.small13,
                 color = colors.labelSecondary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = GoalTextMaxHeight)
+                    .verticalScroll(rememberScrollState()),
             )
             goal.blockedReason?.let {
                 Text(

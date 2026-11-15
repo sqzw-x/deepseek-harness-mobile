@@ -462,8 +462,11 @@ expands it back into one `assistant/chunk` per member: read as a single event a
 run swallows the sequence numbers of everything after its first, and the hole
 that leaves reads as a gapped journal.
 An `ignorable: true` marks an informational event a reader that does not
-recognise its `type` may skip; this client renders unknown events as passthrough
-rows either way.
+recognise its `type` may skip; this fork still renders unknown events, including
+unknown plugin records, as passthrough rows either way. Only recognised machine
+noise, including `plugin:translator/request` and `plugin:translator/result`, is
+hidden from chat. History pages, follow snapshots and live entries preserve the
+flag; the journal and Trajectory retain every event.
 
 ### Session format V3: attempts and settlements
 

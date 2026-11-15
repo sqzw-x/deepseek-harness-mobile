@@ -5,7 +5,84 @@ All notable changes to DSH Mobile are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **One compaction is one row in the chat, not a stack of identical ones.** The transcript showed
+  a "Compacted: Summary" row for every event the harness writes around a compaction: one when it
+  starts, one with the summary, one when it ends, plus another for each model-free prune. Only the
+  summary row had anything to open, so a long conversation filled with look-alike rows, two thirds
+  of them empty (closes #98). Now only the summary draws, so a compaction is a single row you can
+  open to read what was kept, and starts, ends and prunes stay out of the way. A summary the
+  harness sent without any text keeps its row but no longer offers an empty expansion. The session
+  history is untouched: every event is still in the log and in Trajectory.
+
+- **Goal actions stay reachable with long text.** A long goal now scrolls inside a capped region
+  in the chat dock and the details panel, so Pause, Edit and Clear stay on screen. The Edit Goal
+  dialog keeps Cancel and OK visible above the keyboard, and every confirm dialog (including Clear
+  Goal) now keeps its buttons pinned below its scrolling text (closes #102).
+
+## [0.21.1] - 2026-11-14
+
+### Fixed
+
+- **Tool results show their text instead of a tree of nested JSON.** A tool's result used to be
+  drawn as a generic JSON tree, so reading a background job's output meant opening Output, `0`,
+  `type`, `text` and `text` again, with a Copy button on every level, before the log appeared
+  (closes #97). The text now shows directly under the tool card and Copy copies exactly that text.
+  Results wrapped in a list of typed text blocks, in an `output` or `content` envelope, or in text
+  that is itself the JSON of another block list are unwrapped, while a result with real fields of
+  its own, such as an exit code beside the output, stays readable as structured data. **Show raw
+  JSON** swaps in the original result untouched and **Copy raw JSON** copies it, so nothing is out
+  of reach. Terminal, diff, read, search and web cards already present their result, so there the
+  same text waits behind the Output row. The hold menu's "Copy output" and the red failure line
+  read results the same way.
+
+  <img src="docs/images/releases/0.21.1/tool-output-shown-as-text.png" alt="A background job's build log shown directly under the tool card, with Copy and Show raw JSON" width="260">
+  <img src="docs/images/releases/0.21.1/tool-output-raw-json-view.png" alt="The same output switched to its original JSON, with Hide raw JSON and Copy raw JSON" width="260">
+
+- **Tapping anywhere else in the chat clears a text selection.** Pressing and holding a word starts
+  a selection, but its highlight, handles and the Copy / Select all toolbar stayed on screen when
+  you tapped the next paragraph, the gap between messages or a card, and with Thinking, tool or
+  context cards open there was even more screen that could not dismiss it (closes #90). One tap
+  outside the selection now clears it, cards open or closed. The tap still does its normal job: it
+  toggles a card, presses a button, opens a link or shows a message's actions. Scrolling, dragging a
+  handle, a long press and the toolbar's Copy and Select all leave the selection alone, and with no
+  selection a tap on a reply leaves the keyboard and the draft as they were.
+
+  <img src="docs/images/releases/0.21.1/text-selection-active.png" alt="A word selected in a reply, with its handles and the Copy and Select all toolbar showing" width="260">
+  <img src="docs/images/releases/0.21.1/text-selection-cleared-by-tap.png" alt="The same chat after tapping another paragraph, with the selection and toolbar gone" width="260">
+
+- **Plugin records stay out of the chat, and the translate button names its provider properly.**
+  After translating a reasoning block, `plugin:translator/request` and `plugin:translator/result`
+  showed up as raw rows in the conversation, live and again when the session was reopened (closes
+  #96). The harness marks those records as safe to skip and the chat now honours it. The Trajectory
+  tab and the raw journal still list them, and records the harness does not mark, like every type
+  the app knows how to draw, still show. The translate button also printed an internal route name
+  such as `deepseek-account`; it now reads Translate with DeepSeek, DeepSeek API, Bing or Google,
+  whichever route the host offers, and a route the app has not met is spelled out in plain words.
+
+  <img src="docs/images/releases/0.21.1/plugin-records-hidden-from-chat.png" alt="A translated reasoning block in the chat with no plugin rows around it, and a Show original link" width="260">
+  <img src="docs/images/releases/0.21.1/translate-button-deepseek-api-label.png" alt="The translate button under a reasoning block reading Translate with DeepSeek API" width="260">
+
+## [0.21.0] - 2026-11-14
+
+![DSH Mobile 0.21.0 on a tablet, a Chromebook, a flip phone, a phone and a foldable](docs/images/releases/0.21.0/devices/hero-devices.png)
+
 ### Added
+
+- **The composer lifts into a drawer for long prompts, with a full-screen editor and a tray for
+  attachments.** Once a draft wraps past one line, the message box lifts into a drawer over the chat,
+  sized to a bounded part of the room above the keyboard, and the row with attach, mention, the
+  permission chip and send stays in view however long the prompt gets. Pasting a few thousand
+  characters no longer hides send behind the keyboard (closes #87). A button on the drawer opens a
+  full-screen editor for the really long ones, with back, mention, attach, the permission shield and
+  send along the top. It edits the same draft, so nothing is copied or lost on the way in or out.
+  Attached files now sit in a tray on top of the message box, and on the editor's page too: it
+  unfolds with the first file and folds away after the last one is removed. The drawer, the editor
+  and the tray all move with short animations instead of jumping.
+
+  <img src="docs/images/releases/0.21.0/devices/composer-tray-phone.png" alt="The composer drawer with two attached files in the tray above it" width="260">
+  <img src="docs/images/releases/0.21.0/devices/fullscreen-editor-phone.png" alt="The full-screen editor with the same two files in its tray" width="260">
 
 - **A default send mode for prompts sent while a turn is running.** Settings → Chat now offers
   **Default send mode**, Queue or Steer, so a reader who always wants one of them no longer flips
@@ -13,6 +90,96 @@ All notable changes to DSH Mobile are documented here. Format based on
   composer until a mode is picked there, and that per-session pick survives a later change to the
   default; holding send still chooses the mode for one message alone. Upgrades keep Queue, so
   nothing changes until the choice is made.
+
+- **A layout for tablets and foldables.** The app was one phone screen stretched to whatever it was
+  given. It now follows Android's window size classes: a phone, a Flip's inner and cover screens and
+  any window under 600dp wide keep exactly the phone layout. From about 620dp the chat list becomes a
+  pane beside the chat, with a button in the top bar to hide it. On windows 1180dp wide and up
+  (tablets in landscape, an unfolded Fold with room) Details docks as a third pane you can close, and
+  the conversation and composer stop at a comfortable reading width and centre in their pane. A
+  landscape phone gets the list beside the chat but never three panes. The Connect, Pair and Settings
+  forms hold a readable width instead of running edge to edge.
+
+  Folds are respected. With the device half open like a book, the boundary between the panes lands
+  on the hinge, so the chat list is one half and the chat the other and nothing sits on the crease.
+  Propped half open like a laptop (a Flip, or a Fold turned sideways), the transcript sits above the
+  hinge and the composer and its controls below it, with the keyboard in the lower half. The window
+  can be resized freely: rotating, folding, unfolding and dragging the split-screen divider no longer
+  restart the activity, so the draft, the attachment tray, the open session, an open sheet and the
+  scroll position stay where they were.
+
+  <img src="docs/images/releases/0.21.0/devices/tablet-three-pane.png" alt="A tablet in landscape with the session list, the chat and Details side by side" width="360">
+  <img src="docs/images/releases/0.21.0/devices/fold-book.png" alt="A foldable half open like a book, with the list on one half and the chat on the other" width="300">
+  <img src="docs/images/releases/0.21.0/devices/flip-tabletop.png" alt="A flip phone propped half open, with the chat above the hinge and the composer below it" width="180">
+
+- **Works on Chromebooks and in desktop windows.** The app is now installable on a Chromebook (a
+  touchscreen, a camera and Wi-Fi are all optional), opens in a 900x700dp window that can be dragged
+  down to 320x360dp, and follows the window live as it is resized, maximized or snapped. With a
+  keyboard, Enter sends and Shift+Enter adds a line (Ctrl+Enter still sends; a phone's return key
+  is untouched), Esc closes a sheet, dialog or the full-screen editor, Tab and Shift+Tab move
+  through the controls with a visible focus ring, and arrow keys and Enter walk the session list.
+  Ctrl+N starts a session, Ctrl+F searches them, Ctrl+K or Ctrl+/ jumps to the message box, Ctrl+B
+  shows or hides the list and Ctrl+, opens settings; all of them are listed in the system's shortcut
+  panel (Search+/ on a Chromebook). With a mouse or trackpad, clickable things show the hand cursor,
+  icon-only buttons name themselves when pointed at, right click opens what a long press opens, and
+  the wheel scrolls the attachment strip sideways. Files and images dragged in from the Files app
+  or another window attach to the message, dropped text lands in the draft, and Ctrl+V pastes a
+  copied image or file as an attachment. See docs/ADAPTIVE.md.
+
+  <img src="docs/images/releases/0.21.0/devices/chromebook-window.png" alt="The app in a resizable Chromebook window with the list, the chat and Details" width="340">
+  <img src="docs/images/releases/0.21.0/devices/chromebook-drag-drop.png" alt="A file being dragged from the Files app onto the message box, with a drop hint showing" width="340">
+
+### Fixed
+
+- **The usage card shows real numbers on every provider.** The card in the session details said "No
+  quota data" for everything except a DeepSeek account: it asked the harness for subscription limits
+  that no harness serves, and only for five hard-coded providers, so OpenCode and the rest never got
+  an answer. It now starts with the session's own usage on any provider: the model, input and output
+  tokens, the cache hit rate and the total, as short counts such as 12.4k in the reader's own digits.
+  A signed-in DeepSeek account shows its balance whichever provider the session runs on, with bonus
+  credit on its own line, exact for values like `0E-16`, and a short "Couldn't load the balance" when
+  the lookup fails; signed out, the row is simply not there. When a provider turns a request away for
+  quota or rate limit, the card and the composer footer say so, and the line clears as soon as a
+  request goes through. The subscription-limit bars are asked for once per connection: a harness
+  without them is remembered and left alone, and the bars appear by themselves if one ever serves
+  them. The token totals that sat in the Context card moved into this one.
+
+  <img src="docs/images/releases/0.21.0/devices/usage-card-phone.png" alt="The usage card in the session details, with session tokens and a DeepSeek balance" width="260">
+
+- **Permission presets read in the app's language.** The permission sheet, the composer's permission
+  chip and the session details panel showed Read Only, Workspace Write, Full access and Auto review
+  in English whatever language the app was set to: the harness sends those four names as they are
+  written in its own preset files and leaves the translating to the client, which did not do it. The
+  four now use the app's own words in all eleven languages, and the Auto review row describes its
+  own behaviour instead of borrowing the workspace-write blurb. A deployment that renamed a shipped
+  preset, and every preset whose name or id the app does not ship, still reads the way the harness
+  labels it.
+
+- **Agent presets show their translated names again.** Harness 0.2 stopped sending the preset
+  roster's `trust` field, so every shipped preset arrived as a tier this build cannot name, and the
+  picker, the top-bar chip and the session details fell back to raw ids (`standard`, `ptc`, …) with
+  no descriptions. The four shipped presets are recognised by id again — and `ptc` beside the older
+  `code` id — while a preset marked as authored, and any id the app does not ship, keeps its own
+  name.
+
+- **No more grey pill between the permission chip and send.** Once a session had reported any
+  context usage at all, the composer drew a small empty bar there, even at 0%, and it took enough
+  room to cut the permission chip down to "Works…" on a Flip's inner screen. The bar now appears
+  only once the window is filling up enough for it to show anything, it takes only the room the chip
+  leaves (the chip keeps its whole name), and a screen reader hears what it says ("62% of context
+  used"). The Details panel still shows the exact figure and the breakdown at any usage.
+
+### Changed
+
+- **Your own actions in the chat are quiet grey lines instead of terminal rows.** Things you do that
+  are not chat messages, such as changing the permission, turning plan mode on or off, compacting
+  the conversation or running any other slash command, used to appear as terminal rows, as if the AI
+  had run them, and they folded into its process. They now show as small centred grey lines: "You
+  changed permission to Read Only", "You turned plan mode on", "You compacted the conversation",
+  "You ran /foo", or a note that it did not go through. What the AI itself does looks the same as
+  before.
+
+  <img src="docs/images/releases/0.21.0/devices/system-lines-phone.png" alt="Two permission changes shown as small grey lines in the chat" width="260">
 
 ## [0.20.0] - 2026-11-09
 

@@ -39,6 +39,48 @@ class ProcessFoldTest {
         assertEquals(8L, rows[2].seq)
     }
 
+    @Test fun `split thoughts fold inside their original turn without losing their identity`() {
+        val mixed = answer(3, "looking").copy(
+            blocks = listOf(ChatBlock("reasoning", "thinking"), ChatBlock("text", "looking")),
+        )
+        val nodes = listOf(TurnStartNode(1, 1), user(2), mixed, call(4), answer(5, "checking"), call(6), answer(7))
+        val grouped = groupToolRows(renderableChatNodes(splitReasoning(nodes), running = false))
+        val rows = foldProcessRows(grouped, listOf(1))
+
+        assertEquals(listOf(2L, -3L, 7L), rows.map { it.seq })
+        val process = rows[1] as TranscriptRow.Process
+        assertEquals(3L, process.sourceSeq)
+        assertEquals(listOf(-3L, 3L, 4L, 5L, 6L), process.rows.map { it.seq })
+        assertEquals(listOf(-3L), (process.rows.first() as TranscriptRow.Activity).items.map { it.seq })
+        // Chronology may use 3, but lazy identity must remain -3, distinct from the answer at 3.
+        assertEquals(listOf(-3L, 3L), grouped.filter { it.sourceSeq == 3L }.map { it.seq })
+    }
+
+    @Test fun `split thoughts in consecutive turns stay in their own processes`() {
+        fun mixed(seq: Long) = answer(seq).copy(
+            blocks = listOf(ChatBlock("reasoning", "thinking"), ChatBlock("text", "looking")),
+        )
+        val nodes = listOf(
+            TurnStartNode(1, 1), user(2), mixed(3), call(4), answer(5),
+            TurnStartNode(6, 2), user(7), mixed(8), call(9), answer(10),
+        )
+        val rows = foldProcessRows(
+            groupToolRows(renderableChatNodes(splitReasoning(nodes), running = false)), listOf(1, 6),
+        )
+        assertEquals(listOf(2L, -3L, 5L, 7L, -8L, 10L), rows.map { it.seq })
+        assertEquals(listOf(-3L, 3L, 4L), (rows[1] as TranscriptRow.Process).rows.map { it.seq })
+        assertEquals(listOf(-8L, 8L, 9L), (rows[4] as TranscriptRow.Process).rows.map { it.seq })
+    }
+
+    @Test fun `paging compares original event sequences rather than split thought identities`() {
+        val older = TranscriptRow.Activity(listOf(reasoning(3).copy(seq = -3)))
+        val newer = TranscriptRow.Activity(listOf(reasoning(8).copy(seq = -8)))
+        val frozen = listOf<TranscriptRow>(newer)
+        val current = listOf<TranscriptRow>(newer, older, TranscriptRow.Message(user(2)))
+        val oldest = frozen.last().sourceSeq
+        assertEquals(listOf(3L, 2L), current.filter { it.sourceSeq < oldest }.map { it.sourceSeq })
+    }
+
     @Test fun `the prompt stays outside the fold`() {
         val rows = fold(
             listOf(user(2), reasoning(3), call(4), answer(5, "reading it"), reasoning(6), call(7), answer(8)),
@@ -96,6 +138,26 @@ class ProcessFoldTest {
         assertEquals(listOf(7L, 9L, 10L), (rows[3] as TranscriptRow.Process).rows.map { it.seq })
         // The history sheet lists the steer as something the reader sent; its jump needs the row.
         assertEquals(2, historyRowIndex(rows, 6L))
+    }
+
+    @Test fun `a command the reader ran mid-turn stays on screen and splits the fold`() {
+        // Picking a permission while a turn runs lands inside that turn. It is the reader's own
+        // action, told as its own line; folded away it would sit among the agent's steps.
+        val permission = CommandNode(
+            5, "command/run",
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"commandId":"c","name":"permission","args":" read-only","source":{"kind":"user"}}""",
+            ),
+        )
+        val rows = fold(
+            listOf(user(2), reasoning(3), call(4), permission, reasoning(6), call(7), answer(8)),
+            turnStarts = listOf(1),
+        )
+        assertEquals(listOf(2L, 3L, 5L, 6L, 8L), rows.map { it.seq })
+        assertTrue((rows[2] as TranscriptRow.Message).node is CommandNode)
+        // Each side is a single run, not an extra Process wrapper around one Activity.
+        assertEquals(listOf(3L, 4L), (rows[1] as TranscriptRow.Activity).items.map { it.seq })
+        assertEquals(listOf(6L, 7L), (rows[3] as TranscriptRow.Activity).items.map { it.seq })
     }
 
     @Test fun `the step count sums every call and every stretch of thinking`() {

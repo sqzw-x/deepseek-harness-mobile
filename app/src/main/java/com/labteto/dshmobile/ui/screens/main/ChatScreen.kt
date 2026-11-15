@@ -2,6 +2,7 @@ package com.labteto.dshmobile.ui.screens.main
 
 import android.graphics.BitmapFactory
 import android.provider.OpenableColumns
+import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,8 +17,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -38,12 +41,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import com.labteto.dshmobile.ui.adaptive.ListControl
+import com.labteto.dshmobile.ui.adaptive.TabletopSplit
+import com.labteto.dshmobile.ui.adaptive.readingGutter
+import com.labteto.dshmobile.ui.adaptive.tabletopRegions
 import com.labteto.dshmobile.connection.AppSettings
 import com.labteto.dshmobile.ui.media.sampleSizeFor
 import com.labteto.dshmobile.ui.rememberHostsStore
@@ -66,6 +81,10 @@ import com.labteto.dshmobile.ui.components.PlanReviewPanel
 import com.labteto.dshmobile.ui.components.planReviewOf
 import com.labteto.dshmobile.ui.components.QuestionsPanel
 import com.labteto.dshmobile.ui.components.rememberDsToast
+import com.labteto.dshmobile.ui.input.AppShortcut
+import com.labteto.dshmobile.ui.input.DropHighlight
+import com.labteto.dshmobile.ui.input.LocalShortcutRouter
+import com.labteto.dshmobile.ui.input.attachmentDropTarget
 import com.labteto.dshmobile.ui.rememberSessionStore
 import com.labteto.dshmobile.ui.screens.main.commands.CommandContext
 import com.labteto.dshmobile.ui.screens.main.commands.CommandDecorations
@@ -106,6 +125,19 @@ fun ChatScreen(
     subagentRequest: String? = null,
     /** Called once the request has been taken, so the same child can be asked for again later. */
     onSubagentRequestHandled: () -> Unit = {},
+    /** What the top bar's leading button does: open the drawer, toggle a docked list, or nothing. */
+    listControl: ListControl = ListControl.OpenDrawer,
+    /**
+     * The widest the transcript and composer grow before they centre in the pane. Unspecified keeps
+     * them as wide as the pane, which is every phone.
+     */
+    readingWidth: Dp = Dp.Unspecified,
+    /**
+     * Set while a half-open horizontal hinge cuts the window: the transcript ends at the hinge and
+     * everything the reader acts on (the docks, an approval, the composer) sits below it. In window
+     * coordinates, because the hinge belongs to the device, not to this column.
+     */
+    tabletop: TabletopSplit? = null,
 ) {
     val store = rememberSessionStore()
     val hostsStore = rememberHostsStore()
@@ -145,6 +177,7 @@ fun ChatScreen(
     val quotaSelection by store.modelSelection.collectAsStateWithLifecycle()
     val quotaProvider = store.quotaProvider()
     val quotaNow = rememberQuotaClock(store, Triple(currentSessionId, quotaProvider, quotaSelection))
+    val quotaLimit = remember(conversation?.nodes) { conversation?.nodes?.let { com.labteto.dshmobile.core.usage.limitHit(it) } }
 
     val currentSession = sessions.firstOrNull { it.sessionId == currentSessionId }
     // A child transcript is a record of another agent's work, and only a continuable child takes
@@ -259,13 +292,14 @@ fun ChatScreen(
         is QuestionOutcome.Unsent -> answerUnsent
     }
 
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        val selection = store.composers.imagePickTarget
-        val target = selection?.first
-        store.composers.imagePickTarget = null
-        if (target != null && uris.isNotEmpty()) {
+    /**
+     * Prepare picked, dropped or pasted images and add them to [target]'s tray. One path for all
+     * three, so a dropped image is held to the same limits, and refused in the same words, as one
+     * picked from the gallery.
+     */
+    fun addImages(target: ComposerDraft, uris: List<Uri>, limits: ImageLimitsView) {
+        if (uris.isNotEmpty()) {
             target.preparing = true
-            val limits = selection.second
             store.composers.scope.launch {
                 val failures = mutableListOf<String>()
                 try {
@@ -314,6 +348,12 @@ fun ChatScreen(
         }
     }
 
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        val selection = store.composers.imagePickTarget
+        store.composers.imagePickTarget = null
+        if (selection != null) addImages(selection.first, uris, selection.second)
+    }
+
     /** Replace one pending file by identity; a chip that was removed meanwhile is left removed. */
     fun updateFile(target: ComposerDraft, id: String, transform: (PendingAttachment.File) -> PendingAttachment.File) {
         val attachments = target.attachments
@@ -348,14 +388,12 @@ fun ChatScreen(
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val target = store.composers.filePickTarget
-        store.composers.filePickTarget = null
-        if (uri == null || target == null) return@rememberLauncherForActivityResult
+    /** Add one picked, dropped or pasted file to [target]'s tray and start its upload. */
+    fun addFile(target: ComposerDraft, uri: Uri) {
         val (name, size) = describeDocument(context.contentResolver, uri)
         if (name == null) {
             toast.second(context.getString(R.string.err_file_read_failed))
-            return@rememberLauncherForActivityResult
+            return
         }
         val file = PendingAttachment.File(
             id = UUID.randomUUID().toString(),
@@ -366,6 +404,28 @@ fun ChatScreen(
         )
         target.attachments.add(file)
         startUpload(file, target)
+    }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = store.composers.filePickTarget
+        store.composers.filePickTarget = null
+        if (uri != null && target != null) addFile(target, uri)
+    }
+
+    /**
+     * Take files that arrived by drop or by paste: images go through the photo path, everything else
+     * is uploaded as a file. A child session refuses files (the host refuses every subagent upload),
+     * so there only images are taken, and the rest is said not to be.
+     * Returns whether anything was taken.
+     */
+    fun attachArrivals(uris: List<Uri>): Boolean {
+        if (uris.isEmpty() || currentSessionId == null || composer.preparing || composer.submitting) return false
+        val (images, others) = uris.partition { context.contentResolver.getType(it)?.startsWith("image/") == true }
+        addImages(composer, images, imageLimits ?: ImageLimitsView())
+        if (others.isNotEmpty()) {
+            if (currentSubagent == null) others.forEach { addFile(composer, it) } else toast.second(context.getString(R.string.err_attachment_failed))
+        }
+        return images.isNotEmpty() || (others.isNotEmpty() && currentSubagent == null)
     }
 
     /** What a decoration gets to work with: the open session's conversation, a command runner, the draft. */
@@ -542,7 +602,33 @@ fun ChatScreen(
             store.panels.get(composer.key).browse(path); panelKey = composer.key
         },
     ) {
-    Surface(modifier = Modifier.fillMaxSize(), color = colors.bgBase) {
+    // Files and text dropped from another window (the ChromeOS Files app, a browser, an app in the
+    // next split) land in the tray and the draft, the same as picking them does.
+    var dropActive by remember { mutableStateOf(false) }
+    fun takeDrop(files: List<Uri>, text: String): Boolean {
+        if (files.isNotEmpty()) return attachArrivals(files)
+        if (text.isBlank() || currentSessionId == null) return false
+        val at = composer.selection.coerceIn(0, draft.length)
+        draft = draft.substring(0, at) + text + draft.substring(at)
+        composer.selection = at + text.length
+        composerFocusTick++
+        return true
+    }
+    // Ctrl+K and Ctrl+/ move to the message box.
+    val shortcutRouter = LocalShortcutRouter.current
+    LaunchedEffect(shortcutRouter) {
+        shortcutRouter.events.collect { if (it == AppShortcut.FocusComposer) composerFocusTick++ }
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .attachmentDropTarget(
+                enabled = currentSessionId != null,
+                onActiveChange = { dropActive = it },
+                onDrop = { files, text -> takeDrop(files, text) },
+            ),
+        color = colors.bgBase,
+    ) {
         // The activity draws edge to edge, so every top-level surface has to consume the insets
         // itself or the chrome ends up underneath the status bar. safeDrawing covers the status
         // bar, the gesture area and the keyboard in one modifier.
@@ -572,6 +658,7 @@ fun ChatScreen(
                 tab = tab,
                 fileCount = sessionFiles.size,
                 onOpenDrawer = onOpenDrawer,
+                listControl = listControl,
                 onOpenModels = { sheet = ChatSheet.Models },
                 onOpenHistory = { sheet = ChatSheet.History },
                 onOpenPresets = {
@@ -627,14 +714,63 @@ fun ChatScreen(
                 },
                 onMention = if (currentSessionId != null) ({ path, folder -> mention(path, folder) }) else null,
                 assistantMemory = assistantMemory,
+                permissionNames = remember(permissions) {
+                    permissions?.options?.associate { it.value to it.name }.orEmpty()
+                },
             )
 
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            // Where this column starts in the window, for a tabletop split: the hinge is a fact about
+            // the device, so it arrives in window coordinates and is turned into this column's own.
+            var contentTopPx by remember { mutableIntStateOf(0) }
+            BoxWithConstraints(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .onGloballyPositioned { contentTopPx = it.positionInWindow().y.toInt() },
+            ) {
                 // Keep transcript/question space even with a long draft. On very short screens,
                 // reserve enough for reference chips, a line of text and the fixed action row.
-                val composerMaxHeight = (maxHeight * 0.6f).coerceAtLeast(180.dp)
+                // The attachment tray sits above the card inside the composer's own height, so it
+                // would eat the card's room if the caps ignored it. It is added on top of them
+                // instead: a card with a tray keeps exactly the room it has without one.
+                val trayAllowance = if (attachments.isNotEmpty()) AttachmentTrayHeight else 0.dp
+                // On a wide pane the transcript and everything under it keep to a comfortable line
+                // length and centre. The lists keep the whole pane to scroll in and take the margin
+                // as padding, so a drag in the margin still scrolls; the blocks that are not lists
+                // take the same margin as padding of their own.
+                val gutter = readingGutter(maxWidth, readingWidth)
+                // A half-open horizontal hinge divides this column: the transcript above it, the
+                // controls below it. Null (no hinge, or no room to honour it) lays the column out
+                // as it always was.
+                val regions = tabletop?.let {
+                    tabletopRegions(
+                        columnTop = with(LocalDensity.current) { contentTopPx.toDp() },
+                        columnHeight = maxHeight,
+                        split = it,
+                    )
+                }
+                // The most the composer may take while it has to stay in the half below the hinge.
+                val bottomHalf = regions?.let { (maxHeight - it.topHeight - it.gap).coerceAtLeast(180.dp) }
+                val composerMaxHeight = (maxHeight * 0.6f).coerceAtLeast(180.dp).capTo(bottomHalf) + trayAllowance
+                // The lifted drawer's cap: 45% of what the keyboard left, floored at the 180dp that
+                // fits a reference row, a line of text and the action row. Smaller than the in-flow
+                // cap on purpose — a drawer that takes more room than the conversation it covers is
+                // not a drawer any more.
+                val composerDrawerHeight = (maxHeight * 0.45f).coerceAtLeast(180.dp).capTo(bottomHalf) + trayAllowance
+                // Two wrapped lines is where the drawer and the full-screen button both appear. The
+                // composer measures that (it is the only thing that knows how the text wrapped);
+                // this is only what it reported.
+                var composerLines by remember { mutableIntStateOf(1) }
+                val composerLifted = composerLines > 1
+                val density = LocalDensity.current
+                // The composer block is composed once, here, however it is shown. In flow the
+                // transcript reserves exactly the height the block measured, so the conversation
+                // still ends where it always ended; lifted it reserves nothing and the block floats
+                // above the conversation rather than growing into it. Measuring is the point: a
+                // reserved height that drifts from the card's is how the composer came to hide its
+                // own action row (#87).
+                var composerBlockPx by remember { mutableIntStateOf(0) }
                 Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f).fillMaxWidth()) {
                 AnimatedContent(
                     targetState = tab,
                     transitionSpec = {
@@ -645,7 +781,7 @@ fun ChatScreen(
                             )
                             .togetherWith(fadeOut(DsAnimations.fade)) using SizeTransform(clip = false)
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = if (regions != null) Modifier.height(regions.topHeight) else Modifier.weight(1f),
                     label = "chatTab",
                 ) { current ->
                     when (current) {
@@ -656,6 +792,7 @@ fun ChatScreen(
                             loadOlderFailed = loadOlderFailed,
                             context = nodeContext,
                             listState = chatListState,
+                            gutter = gutter,
                             onLoadOlder = { scope.launch { store.loadOlder() } },
                             onLaidOut = store::markSessionSwitchRendered,
                             jumpToSeq = pendingJumpSeq,
@@ -675,6 +812,7 @@ fun ChatScreen(
                             usage = tokenUsage,
                             cwd = workingDirectory,
                             listState = trajectoryListState,
+                            gutter = gutter,
                             loadingOlder = loadingOlder,
                             loadOlderFailed = loadOlderFailed,
                             onLoadOlder = { scope.launch { store.loadOlder() } },
@@ -686,16 +824,20 @@ fun ChatScreen(
                             files = sessionFiles,
                             cwd = workingDirectory,
                             listState = filesListState,
+                            gutter = gutter,
                         )
                     }
                 }
-                }
 
+                // Everything under the transcript. In flow it continues this column; with a tabletop
+                // hinge it is the bottom half, anchored to the foot of the column so the docks sit
+                // directly above the composer however much room the half has.
+                val belowTranscript: @Composable ColumnScope.() -> Unit = {
                 conversation?.let { conv ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 12.dp + gutter),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         // Each dock slides in and out on its own, so one arriving mid-turn eases the
@@ -732,6 +874,7 @@ fun ChatScreen(
                             ?.let { toast.second(it) }
                     }
                     ApprovalPanel(
+                        modifier = Modifier.padding(horizontal = gutter),
                         toolName = approval.toolName,
                         reason = approval.reason,
                         onAllow = { decide(true) },
@@ -765,6 +908,7 @@ fun ChatScreen(
                             )
                         }
                         PlanReviewPanel(
+                            modifier = Modifier.padding(horizontal = gutter),
                             review = review,
                             busy = planBusy,
                             onApprove = { decide(review.approve) },
@@ -778,6 +922,7 @@ fun ChatScreen(
                         )
                     } else {
                         QuestionsPanel(
+                            modifier = Modifier.padding(horizontal = gutter),
                             requestKey = questions.rpcId,
                             questions = questions.items,
                             onSubmit = { answer ->
@@ -790,117 +935,185 @@ fun ChatScreen(
 
                 // Weighted questions are measured after the composer, so long questions cannot
                 // consume its controls. The question area scrolls within its allotted height.
-                ModernQuestions(store, currentSessionId, Modifier.weight(1f, fill = false))
+                ModernQuestions(store, currentSessionId, Modifier.weight(1f, fill = false).padding(horizontal = gutter))
 
-                // The `/` autocomplete sits where the web's does: directly above the composer,
-                // only while the draft is a slash token being typed.
-                AnimatedPresence(activeSlash(draft, composer.selection)) { slash ->
-                    SlashMenu(
-                        query = slash,
-                        commands = if (commandsAvailable) commands else emptyList(),
-                        skills = skills,
-                        onPick = { row ->
-                            when (row) {
-                                is SlashRow.Command -> if (row.descriptor.input == null) {
-                                    draft = ""
-                                    send(row.descriptor.line)
-                                } else {
-                                    draft = row.descriptor.draftPrefix
-                                    composer.selection = draft.length
+                // Reserved for the composer block drawn below: the conversation ends exactly where
+                // the block starts, which is the space the composer took when it was a child of
+                // this column. Lifted, it reserves nothing and the drawer floats over the
+                // conversation instead.
+                Spacer(Modifier.height(if (composerLifted) 0.dp else with(density) { composerBlockPx.toDp() }))
+                }
+                if (regions != null) {
+                    // The hinge: a hairline where the device folds, so the two halves read as two
+                    // surfaces rather than a transcript that stops for no reason.
+                    val rule = colors.borderL2
+                    Spacer(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(regions.gap)
+                            .drawBehind {
+                                val y = size.height / 2f
+                                drawLine(rule, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                            },
+                    )
+                    Column(
+                        Modifier.fillMaxWidth().weight(1f),
+                        verticalArrangement = Arrangement.Bottom,
+                        content = belowTranscript,
+                    )
+                } else {
+                    belowTranscript()
+                }
+                }
+
+                // The composer and the two things that belong directly above it, anchored to the
+                // bottom of the conversation. Composed here once whatever state it is in; only its
+                // cap and its placement change between the two.
+                Column(
+                    Modifier.fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = gutter)
+                        .onSizeChanged { composerBlockPx = it.height },
+                ) {
+                    // The `/` autocomplete sits where the web's does: directly above the composer,
+                    // only while the draft is a slash token being typed.
+                    AnimatedPresence(activeSlash(draft, composer.selection)) { slash ->
+                        SlashMenu(
+                            query = slash,
+                            commands = if (commandsAvailable) commands else emptyList(),
+                            skills = skills,
+                            onPick = { row ->
+                                when (row) {
+                                    is SlashRow.Command -> if (row.descriptor.input == null) {
+                                        draft = ""
+                                        send(row.descriptor.line)
+                                    } else {
+                                        draft = row.descriptor.draftPrefix
+                                        composer.selection = draft.length
+                                    }
+                                    is SlashRow.Skill -> {
+                                        draft = "/${row.entry.name} "
+                                        composer.selection = draft.length
+                                    }
                                 }
-                                is SlashRow.Skill -> {
-                                    draft = "/${row.entry.name} "
-                                    composer.selection = draft.length
-                                }
+                            },
+                        )
+                    }
+
+                    // A child whose mode is `one-shot`, and one whose own descriptor has not arrived
+                    // yet, refuses every prompt. Saying so above the composer beats a dead field that
+                    // looks like a loading state: the transcript stays readable either way.
+                    if (currentSubagent?.continuable == false) {
+                        Text(
+                            stringResource(R.string.subagents_readonly),
+                            style = DsType.caption11,
+                            color = colors.labelTertiary,
+                            modifier = Modifier.padding(horizontal = DsSpacing.medium),
+                        )
+                    }
+
+                    // A notification may switch sessions while the editor owns a dialog window.
+                    // Keep transient editor windows with their draft; a new session must not inherit
+                    // the previous session's page on top of the transcript the notification opened.
+                    androidx.compose.runtime.key(composer.key) {
+                    Composer(
+                        // In flow the composer may grow to 60% of what the keyboard left, because
+                        // the conversation above it still has the rest. Lifted it covers the
+                        // conversation, so it stops at 45%: the drawer is a place to write, not a
+                        // page that hides what is being answered.
+                        modifier = Modifier.heightIn(max = if (composerLifted) composerDrawerHeight else composerMaxHeight),
+                        lifted = composerLifted,
+                        onLineCountChange = { composerLines = it },
+                        references = composer.references,
+                        onAddReference = {
+                            referencePicker = activeReference(draft, composer.selection) ?: AtQuery(composer.selection, composer.selection, "")
+                        },
+                        onOpenReference = { reference ->
+                            if (reference.kind == "session") scope.launch { store.openSession(reference.target) }
+                            else {
+                                val panel = store.panels.get(composer.key)
+                                if (reference.kind == "folder") {
+                                    panel.directory = reference.target
+                                    panel.section = 0
+                                    // Reopening the panel must load this target, not reuse the previous
+                                    // directory's cached rows. Its existing launch effect loads null listings.
+                                    panel.listing = null
+                                } else panel.open(reference.target)
+                                panelKey = composer.key
                             }
                         },
+                        draft = draft,
+                        onDraftChange = { draft = it },
+                        cursor = composer.selection,
+                        onCursorChange = { composer.selection = it; if (draft.take(it).endsWith("@")) referencePicker = activeReference(draft, it) },
+                        attachments = attachments,
+                        onRemoveAttachment = { index -> attachments.removeAt(index) },
+                        onRetryAttachment = { index ->
+                            (attachments.getOrNull(index) as? PendingAttachment.File)?.let { startUpload(it) }
+                        },
+                        // The permission preset is changed through `/permission`, a command the host
+                        // resolves like any other agent operation — refused for a child session. No
+                        // chip rather than a chip whose only outcome is an error.
+                        permissions = permissions.takeIf { currentSubagent == null },
+                        pendingPermission = pendingPermission,
+                        onPermissionPick = { value -> scope.launch { reportPermission(store.setPermissionPreset(value)) } },
+                        contextBreakdown = contextBreakdown,
+                        contextPressure = contextPressure,
+                        // Stop on a child is the subagent interrupt, which only exists for a
+                        // continuable one; offering the button on a one-shot child promised a route
+                        // the host does not have.
+                        running = conversation?.running == true && (currentSubagent?.continuable != false),
+                        // Only an ordinary session and a continuable child can be prompted; every
+                        // other child refuses, and the notice above the composer says so.
+                        enabled = currentSessionId != null && (currentSubagent?.continuable != false),
+                        // A send in flight holds the buttons but not the text field, so the keyboard
+                        // stays up between messages.
+                        submitting = composer.submitting,
+                        preparing = composer.preparing,
+                        onOpenSheet = { sheet = ChatSheet.Commands },
+                        // A lambda, not `::send`. The composer holds this through rememberUpdatedState,
+                        // which keeps what it has when the new value is equal to it, and a reference to a
+                        // local function equals every other reference to that function whatever it
+                        // captured. Each session's `::send` compared equal to the first and was dropped, so
+                        // the button went on sending with the attachment list of whichever session was
+                        // open when this screen first composed. A lambda is rebuilt when what it captures
+                        // changes and compares by identity, so the composer always holds the current one.
+                        onSend = { text -> send(text) },
+                        onSendWith = { text, delivery -> send(text, delivery) },
+                        onStop = { scope.launch { store.cancelTurn() } },
+                        focusTick = composerFocusTick,
+                        // Ctrl+V with an image or a file on the clipboard attaches it; text is pasted as usual.
+                        onPasteFiles = { uris -> attachArrivals(uris) },
+                        // The page's attach button reaches the same picker the `+` sheet does, and a
+                        // child session refuses attachments the way it refuses commands, so it gets
+                        // no button rather than one that ends in an error.
+                        onAttachFile = if (currentSubagent == null) {
+                            {
+                                if (!composer.preparing && store.composers.filePickTarget == null) {
+                                    store.composers.filePickTarget = composer
+                                    filePicker.launch(arrayOf("*/*"))
+                                }
+                            }
+                        } else {
+                            null
+                        },
                     )
-                }
+                    }
 
-                // A child whose mode is `one-shot`, and one whose own descriptor has not arrived
-                // yet, refuses every prompt. Saying so above the composer beats a dead field that
-                // looks like a loading state: the transcript stays readable either way.
-                if (currentSubagent?.continuable == false) {
-                    Text(
-                        stringResource(R.string.subagents_readonly),
-                        style = DsType.caption11,
-                        color = colors.labelTertiary,
-                        modifier = Modifier.padding(horizontal = DsSpacing.medium),
-                    )
-                }
-
-                Composer(
-                    modifier = Modifier.heightIn(max = composerMaxHeight),
-                    references = composer.references,
-                    onAddReference = {
-                        referencePicker = activeReference(draft, composer.selection) ?: AtQuery(composer.selection, composer.selection, "")
-                    },
-                    onOpenReference = { reference ->
-                        if (reference.kind == "session") scope.launch { store.openSession(reference.target) }
-                        else {
-                            val panel = store.panels.get(composer.key)
-                            if (reference.kind == "folder") {
-                                panel.directory = reference.target
-                                panel.section = 0
-                                // Reopening the panel must load this target, not reuse the previous
-                                // directory's cached rows. Its existing launch effect loads null listings.
-                                panel.listing = null
-                            } else panel.open(reference.target)
-                            panelKey = composer.key
-                        }
-                    },
-                    draft = draft,
-                    onDraftChange = { draft = it },
-                    cursor = composer.selection,
-                    onCursorChange = { composer.selection = it; if (draft.take(it).endsWith("@")) referencePicker = activeReference(draft, it) },
-                    attachments = attachments,
-                    onRemoveAttachment = { index -> attachments.removeAt(index) },
-                    onRetryAttachment = { index ->
-                        (attachments.getOrNull(index) as? PendingAttachment.File)?.let { startUpload(it) }
-                    },
-                    // The permission preset is changed through `/permission`, a command the host
-                    // resolves like any other agent operation — refused for a child session. No
-                    // chip rather than a chip whose only outcome is an error.
-                    permissions = permissions.takeIf { currentSubagent == null },
-                    pendingPermission = pendingPermission,
-                    onPermissionPick = { value -> scope.launch { reportPermission(store.setPermissionPreset(value)) } },
-                    contextBreakdown = contextBreakdown,
-                    contextPressure = contextPressure,
-                    // Stop on a child is the subagent interrupt, which only exists for a
-                    // continuable one; offering the button on a one-shot child promised a route
-                    // the host does not have.
-                    running = conversation?.running == true && (currentSubagent?.continuable != false),
-                    // Only an ordinary session and a continuable child can be prompted; every
-                    // other child refuses, and the notice above the composer says so.
-                    enabled = currentSessionId != null && (currentSubagent?.continuable != false),
-                    // A send in flight holds the buttons but not the text field, so the keyboard
-                    // stays up between messages.
-                    submitting = composer.submitting,
-                    preparing = composer.preparing,
-                    onOpenSheet = { sheet = ChatSheet.Commands },
-                    // A lambda, not `::send`. The composer holds this through rememberUpdatedState,
-                    // which keeps what it has when the new value is equal to it, and a reference to a
-                    // local function equals every other reference to that function whatever it
-                    // captured. Each session's `::send` compared equal to the first and was dropped, so
-                    // the button went on sending with the attachment list of whichever session was
-                    // open when this screen first composed. A lambda is rebuilt when what it captures
-                    // changes and compares by identity, so the composer always holds the current one.
-                    onSend = { text -> send(text) },
-                    onSendWith = { text, delivery -> send(text, delivery) },
-                    onStop = { scope.launch { store.cancelTurn() } },
-                    focusTick = composerFocusTick,
-                )
-
-                StatsFooter(
-                    stats = sessionStats, usage = tokenUsage,
-                    quotaText = com.labteto.dshmobile.core.usage.usageFooter(
-                        quota.rows.firstOrNull { it.provider == quotaProvider }, quotaNow,
-                        false, quotaLabels(),
-                    ),
-                )
+                    // The footer belongs under the card it describes and stays there while the card
+                    // is in flow. Lifted, the drawer covers the space it would take, and a line of
+                    // numbers under a floating card reads as a mistake; it comes back with the
+                    // one-line composer.
+                    if (!composerLifted) {
+                        StatsFooter(
+                            stats = sessionStats, usage = tokenUsage,
+                            quotaText = usageFooterText(quota, quotaProvider, quotaLimit, quotaNow),
+                        )
+                    }
                 }
             }
         }
+        DropHighlight(visible = dropActive)
         DsToastHost(toast, modifier = Modifier.fillMaxWidth())
     }
 
@@ -1101,3 +1314,5 @@ internal fun decodePick(bytes: ByteArray): DecodedPick {
 /** The composer thumbnail is 56dp; decoding much past that is wasted memory. */
 private const val PREVIEW_WIDTH_PX = 224
 
+/** This height, held to [limit] when there is one: the room a composer has in the half below a hinge. */
+private fun Dp.capTo(limit: Dp?): Dp = if (limit == null) this else minOf(this, limit)

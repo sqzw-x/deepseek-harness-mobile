@@ -2,7 +2,7 @@ package com.labteto.dshmobile.ui.screens.main
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +38,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.core.session.AssistantMessageNode
@@ -83,6 +84,8 @@ internal fun TrajectoryTab(
     cwd: String?,
     listState: LazyListState,
     modifier: Modifier = Modifier,
+    /** Extra room at each side, so a wide pane keeps the ledger to a reading width. */
+    gutter: Dp = 0.dp,
     loadingOlder: Boolean = false,
     loadOlderFailed: Boolean = false,
     onLoadOlder: () -> Unit = {},
@@ -115,7 +118,7 @@ internal fun TrajectoryTab(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 16.dp + gutter, end = 16.dp + gutter, top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         // The ledger shows what the transcript has loaded, and Chat pages history in as you

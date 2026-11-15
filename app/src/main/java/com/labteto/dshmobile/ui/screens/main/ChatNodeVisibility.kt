@@ -65,8 +65,12 @@ internal fun renderableChatNodes(nodes: List<ChatNode>, running: Boolean): List<
     // the command ledger, and so does this. The marker the rewind appended stays, drawn as a
     // divider rather than an empty user bubble.
     val cut = RewindCuts.hiddenSeqs(nodes)
+    // A reader's command draws one system line from its `command/run`; the `command/done` that
+    // settles it is told inside that line, so it must not draw a second row.
+    val folded = foldedCommandDones(nodes)
     return nodes.filter { node ->
-        node.seq !in cut && ((node is UserMessageNode && node.isRewindMarker) || node.rendersContent(running, knownToolCallIds))
+        node.sourceSeq !in cut && node.seq !in folded &&
+            ((node is UserMessageNode && node.isRewindMarker) || node.rendersContent(running, knownToolCallIds))
     }
 }
 
@@ -84,10 +88,8 @@ internal fun ChatNode.rendersContent(
     // Only an unclean ending says anything; a completed turn is the frame. Kinds [ChatNodeItem]
     // draws nothing for (harness 0.1.7's `forked`, or one this build has never seen) cost a gap.
     is TurnEndNode -> reasonKind in DRAWN_TURN_END_KINDS
-    // Bookkeeping event types are not "unknown" — they are noise between the tool calls. Filtering
-    // them here rather than only in the renderer also keeps them out of [groupToolRows], which
-    // would otherwise let a `job/settled` row split one run of work into two.
-    is OtherNode -> !isStructuralEventType(type)
+    // Filter machine noise before grouping, so a hidden row cannot split a run of work.
+    is OtherNode -> drawsInTranscript()
 
     // Content that can still fold to nothing.
     is UserMessageNode -> blocks.any { it.kind == "image" } || displayText().isNotBlank()
@@ -111,7 +113,7 @@ internal fun ChatNode.rendersContent(
     // Always draws.
     is ToolCallNode -> true
     is PlanModeNode -> true
-    is CompactionNode -> true
+    is CompactionNode -> drawsInTranscript()
     is RetryNode -> true
     is TurnErrorNode -> true
     is CommandNode -> true
@@ -119,6 +121,43 @@ internal fun ChatNode.rendersContent(
     is TitleNode -> false
     is SubagentNode -> true
 }
+
+/**
+ * Whether the transcript draws an [OtherNode].
+ *
+ * Only recognised machine noise stays out: structural bookkeeping, job lifecycle records and the
+ * translator's request/result records. Unknown types, including plugin records, stay visible even
+ * when the harness marks them `ignorable`; that marker never overrides this fork's compatibility
+ * contract. Shared by [rendersContent] and [ChatNodeItem] so filtering also removes hidden grouping
+ * boundaries. Trajectory still reads every record from the journal.
+ */
+internal fun OtherNode.drawsInTranscript(): Boolean =
+    !isStructuralEventType(type) && type !in TRANSCRIPT_PLUGIN_NOISE_TYPES
+
+private val TRANSCRIPT_PLUGIN_NOISE_TYPES = setOf(
+    "plugin:translator/request",
+    "plugin:translator/result",
+)
+
+/** The compaction event type that carries the summary, the only one with anything to read. */
+internal const val COMPACTION_SUMMARY_KIND = "compaction/summary"
+
+/**
+ * Whether the transcript draws a [CompactionNode].
+ *
+ * One compaction is several events: `compaction/start` and `compaction/end` bracket it (they share
+ * a `compactionId`) and `compaction/summary` between them holds the text; a model-free
+ * `compaction/prune` has no text at all. Drawing every one of them put three look-alike
+ * "Compacted: Summary" rows in the transcript per compaction, two of them empty, plus another empty
+ * one per prune. Only the summary draws, so a compaction is one row, as in the harness's own client.
+ *
+ * A `compaction/end` that carries an `error` stays out too. Nothing in this build reports an
+ * automatic compaction that failed, but the row it used to draw said "Compacted", which was untrue,
+ * and a `/compact` that fails already says so in its own system line.
+ *
+ * The nodes themselves stay in the fold, so the journal and Trajectory still have every event.
+ */
+internal fun CompactionNode.drawsInTranscript(): Boolean = kind == COMPACTION_SUMMARY_KIND
 
 /** The `turn/end` reasons [ChatNodeItem] draws something for. */
 internal val DRAWN_TURN_END_KINDS = setOf("aborted", "interrupted", "error", "max-tokens")

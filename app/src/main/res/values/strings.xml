@@ -55,12 +55,16 @@
     <string name="chatlist_sort_updated">Sort by last update</string>
     <string name="chatlist_sort_manual">Manual order</string>
     <string name="chatlist_open">Open chats</string>
+    <string name="chatlist_hide">Hide chats</string>
+    <string name="chatlist_show">Show chats</string>
     <string name="chatlist_workspace_rename">Rename project</string>
     <string name="chatlist_workspace_delete">Remove project</string>
     <string name="chatlist_workspace_delete_confirm">Remove this project from the harness? Its folder and session logs stay as they are.</string>
     <string name="chatlist_needs_action">Needs you</string>
     <string name="chatlist_sort_title">Order</string>
     <string name="chat_composer_hint">Message the agent</string>
+    <string name="chat_composer_expand">Open the full screen editor</string>
+    <string name="chat_composer_fullscreen_title">Message</string>
     <string name="chat_composer_send">Send message</string>
     <string name="chat_composer_commands">Commands</string>
     <string name="chat_composer_mode">Send mode</string>
@@ -117,6 +121,9 @@
     <string name="chat_details_empty">Tap a tool call in the chat to see its input and output.</string>
     <string name="chat_input_placeholder">Input</string>
     <string name="chat_output_placeholder">Output</string>
+    <string name="tool_output_show_raw">Show raw JSON</string>
+    <string name="tool_output_hide_raw">Hide raw JSON</string>
+    <string name="tool_output_copy_raw">Copy raw JSON</string>
     <string name="goal_title">Goal</string>
     <string name="goal_none">No active goal</string>
     <string name="goal_phase_active">Active</string>
@@ -429,6 +436,15 @@
     <string name="harness_automation_history_not_found">This task is no longer available.</string>
     <string name="harness_automation_history_cursor_error">The records changed. Try again.</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">You changed permission to %1$s</string>
+    <string name="system_line_permission_changed_plain">You changed the permission</string>
+    <string name="system_line_permission_failed">The permission change didn\'t go through</string>
+    <string name="system_line_compact">You compacted the conversation</string>
+    <string name="system_line_plan_on">You turned plan mode on</string>
+    <string name="system_line_plan_off">You turned plan mode off</string>
+    <string name="system_line_command">You ran %1$s</string>
+    <string name="system_line_command_failed">%1$s didn\'t go through</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">Rewound to here</string>
     <string name="rewind_no_text">(no text)</string>
@@ -524,10 +540,9 @@
     <string name="hold_replace_draft_confirm">Replace</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">Limits and balance</string>
+    <string name="quota_title">Usage</string>
     <string name="quota_short">5h</string>
     <string name="quota_week">Week</string>
-    <string name="quota_unknown">No quota data</string>
     <string name="quota_refresh">Recheck</string>
     <string name="quota_checked">Checked: %1$s</string>
     <string name="quota_all">All providers</string>
@@ -678,4 +693,34 @@
     <string name="hold_workspace_actions">Folder actions</string>
     <string name="chatlist_show_all">Show all %1$d</string>
     <string name="chatlist_show_less">Show less</string>
+    <string name="quota_session_title">This session</string>
+    <string name="quota_tokens_input">Input</string>
+    <string name="quota_tokens_output">Output</string>
+    <string name="quota_tokens_cache">Cache hits</string>
+    <string name="quota_tokens_total">Total</string>
+    <string name="quota_session_empty">No tokens used yet</string>
+    <string name="quota_balance_title">DeepSeek balance</string>
+    <string name="quota_balance_bonus">Bonus: %1$s</string>
+    <string name="quota_balance_failed">Couldn\'t load the balance</string>
+    <string name="quota_limit_reached">Usage limit reached</string>
+    <string name="quota_rate_limited">Rate limited, try again shortly</string>
+    <string name="quota_limit_short">Limit reached</string>
+    <string name="quota_rate_short">Rate limited</string>
+    <string name="permission_preset_read_only">Read Only</string>
+    <string name="permission_preset_workspace_write">Workspace Write</string>
+    <string name="permission_preset_full_access">Full access</string>
+    <string name="permission_preset_auto">Auto review</string>
+    <string name="permission_preset_auto_desc">Run without a sandbox after an experimental same-model review of every native tool call and PTC inner call.</string>
+    <string name="shortcuts_group_message">Message box</string>
+    <string name="shortcuts_group_sessions">Sessions</string>
+    <string name="shortcuts_group_general">General</string>
+    <string name="shortcuts_send">Send message</string>
+    <string name="shortcuts_newline">New line</string>
+    <string name="shortcuts_focus_composer">Go to the message box</string>
+    <string name="shortcuts_new_session">New session</string>
+    <string name="shortcuts_search_sessions">Search sessions</string>
+    <string name="shortcuts_toggle_list">Show or hide sessions</string>
+    <string name="shortcuts_settings">Open settings</string>
+    <string name="shortcuts_close">Close a sheet or dialog</string>
+    <string name="chat_drop_hint">Drop files here to attach them</string>
 </resources>

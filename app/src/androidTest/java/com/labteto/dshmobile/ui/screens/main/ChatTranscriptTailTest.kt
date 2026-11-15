@@ -212,6 +212,17 @@ class ChatTranscriptTailTest {
     }
 
     @Test
+    fun aSettledTailInARunningTurnStillOffersItsActions() {
+        harness(longHistory())
+
+        compose.onNodeWithText("answer 29").performClick()
+
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        compose.onNodeWithContentDescription(context.getString(com.labteto.dshmobile.R.string.chat_copy_message))
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun turningFollowingOffLeavesAnArrivalBelowTheViewport() {
         val history = longHistory()
         val h = harness(history, followStreaming = false)

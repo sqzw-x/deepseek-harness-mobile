@@ -7,6 +7,9 @@ import android.view.ViewParent
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -22,8 +25,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -33,8 +39,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
+import com.labteto.dshmobile.ui.theme.DsAnimations
 import com.labteto.dshmobile.ui.theme.DsTheme
 import com.labteto.dshmobile.ui.theme.isDsDark
+import kotlinx.coroutines.delay
 import kotlin.math.max
 
 /**
@@ -46,16 +54,47 @@ import kotlin.math.max
  * The page is a dialog window rather than a composable drawn over the chat because it keeps the
  * window-level stacking the sheets, dialogs and pickers a page opens depend on, and because a page
  * can be opened from deep inside a list (the image viewer) where an overlay would be clipped.
+ *
+ * A window has no enter or exit of its own: composing it shows it, and leaving the composition
+ * removes it on the same frame. A page that wants one passes [visibleState]; the whole page
+ * (background included) then rises in and sinks away through it, and the caller keeps the page
+ * composed until the state reports it finished leaving (`currentState` false with nothing pending).
+ * Left null, the page appears and goes instantly, as every other page does.
+ *
+ * [onWindowReady] is called once the window has had the few frames it needs to reach the screen.
+ * An enter transition started with the composition plays out before anything is visible, so a
+ * caller that animates the page in starts its transition from here rather than from composition.
  */
 @Composable
 fun DsFullScreenDialog(
     onDismissRequest: () -> Unit,
     containerColor: Color = DsTheme.colors.bgBase,
+    visibleState: MutableTransitionState<Boolean>? = null,
+    onWindowReady: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     DsWindow(onDismissRequest = onDismissRequest, dimBehind = false) { insets ->
-        Surface(Modifier.fillMaxSize(), color = containerColor) {
-            Column(Modifier.fillMaxSize().windowInsetsPadding(insets), content = content)
+        if (onWindowReady != null) {
+            val ready by rememberUpdatedState(onWindowReady)
+            LaunchedEffect(Unit) {
+                delay(WindowSettleMillis)
+                ready()
+            }
+        }
+        val page: @Composable () -> Unit = {
+            Surface(Modifier.fillMaxSize(), color = containerColor) {
+                Column(Modifier.fillMaxSize().windowInsetsPadding(insets), content = content)
+            }
+        }
+        if (visibleState == null) {
+            page()
+        } else {
+            AnimatedVisibility(
+                visibleState = visibleState,
+                modifier = Modifier.fillMaxSize(),
+                enter = DsAnimations.pageEnter,
+                exit = DsAnimations.pageExit,
+            ) { page() }
         }
     }
 }
@@ -114,9 +153,18 @@ internal fun DsWindow(
         val insets = remember(bars, cutout, keyboard, host, windowView) {
             bars.union(cutout).union(keyboard).union(HostRelative(host, windowView))
         }
-        CompositionLocalProvider(LocalDsHost provides host) { content(insets) }
+        // Escape closes any window the app opens, as back does on a touch screen.
+        CompositionLocalProvider(LocalDsHost provides host) {
+            Box(Modifier.fillMaxSize().dismissOnEscape { onDismissRequest() }) { content(insets) }
+        }
     }
 }
+
+/**
+ * How long a freshly composed dialog window takes to reach the screen on a phone: measured on a
+ * 60Hz emulator, the first frames of anything started with the composition were never seen.
+ */
+private const val WindowSettleMillis = 120L
 
 /** The activity's window and the bars it reports, which every dialog window falls back to. */
 @Immutable
@@ -258,6 +306,6 @@ fun DsBareDialog(onDismissRequest: () -> Unit, content: @Composable () -> Unit) 
                 setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
             }
         }
-        content()
+        Box(Modifier.fillMaxSize().dismissOnEscape { onDismissRequest() }) { content() }
     }
 }

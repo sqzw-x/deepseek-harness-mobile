@@ -7,7 +7,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -56,6 +56,23 @@ internal sealed interface TranscriptRow {
         override val seq get() = rows.first().seq
     }
 }
+
+/**
+ * Original event sequence for chronological comparisons, separate from a row's lazy identity.
+ * [splitReasoning] gives a thought the negated sequence of its answer so their keys cannot collide;
+ * it still belongs to that answer's turn and rewind range, not before the start of the session.
+ */
+internal val ChatNode.sourceSeq: Long
+    get() = if (this is AssistantMessageNode && seq < 0) -seq else seq
+
+/** A group's place in the log is its first member's original event, never its synthetic key. */
+internal val TranscriptRow.sourceSeq: Long
+    get() = when (this) {
+        is TranscriptRow.Message -> node.sourceSeq
+        is TranscriptRow.Activity -> items.first().sourceSeq
+        is TranscriptRow.Context -> nodes.first().sourceSeq
+        is TranscriptRow.Process -> rows.first().sourceSeq
+    }
 
 /**
  * Whether a node is part of a run of work rather than something the reader came to read.
@@ -228,9 +245,9 @@ internal fun foldProcessRows(
     val folded = mutableListOf<TranscriptRow>()
     var index = 0
     while (index < rows.size) {
-        val turn = turnIndexOf(rows[index].seq, turnStarts)
+        val turn = turnIndexOf(rows[index].sourceSeq, turnStarts)
         var end = index + 1
-        while (end < rows.size && turnIndexOf(rows[end].seq, turnStarts) == turn) end++
+        while (end < rows.size && turnIndexOf(rows[end].sourceSeq, turnStarts) == turn) end++
         val slice = rows.subList(index, end)
         val isLast = end >= rows.size
         folded += if (turn < 0 || (running && isLast)) slice else foldTurnProcess(slice)
@@ -296,8 +313,12 @@ private fun foldTurnProcess(rows: List<TranscriptRow>): List<TranscriptRow> {
         // turn of its own, so a reader who corrected the agent halfway would find their own words
         // folded away, and the history sheet's jump to them would land on nothing. The fold splits
         // around it instead: what led up to the correction, the correction, what followed it.
+        //
+        // Nor is a command the reader ran. It is their action, told as its own line; folded into
+        // the process it would sit among the agent's steps, which is what the line is there to
+        // tell apart. Picking a permission while a turn runs lands it inside that turn.
         val keep = row is TranscriptRow.Context ||
-            (row as? TranscriptRow.Message)?.node is UserMessageNode
+            (row as? TranscriptRow.Message)?.node.let { it is UserMessageNode || (it is CommandNode && it.isRun) }
         if (keep) { flush(); folded += row } else run += row
     }
     flush()

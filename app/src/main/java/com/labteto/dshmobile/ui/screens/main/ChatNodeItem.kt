@@ -5,7 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
@@ -61,6 +61,7 @@ import com.labteto.dshmobile.core.session.TitleNode
 import com.labteto.dshmobile.core.session.TodoNode
 import com.labteto.dshmobile.core.session.ToolCallNode
 import com.labteto.dshmobile.core.session.ToolResultNode
+import com.labteto.dshmobile.core.session.unwrapToolText
 import com.labteto.dshmobile.core.session.TurnEndNode
 import com.labteto.dshmobile.core.session.TurnErrorNode
 import com.labteto.dshmobile.core.session.TurnStartNode
@@ -73,7 +74,6 @@ import com.labteto.dshmobile.ui.components.DsPill
 import com.labteto.dshmobile.ui.components.FeatherIcons
 import com.labteto.dshmobile.ui.components.HoldAction
 import com.labteto.dshmobile.ui.components.HoldMenu
-import com.labteto.dshmobile.ui.components.LocalSelectionDismiss
 import com.labteto.dshmobile.ui.components.MarkdownText
 import com.labteto.dshmobile.ui.components.SelectTextDialog
 import com.labteto.dshmobile.ui.components.clickableWithHold
@@ -118,6 +118,12 @@ internal data class ChatNodeContext(
      * falls back to state local to the row, which is right where the rows are short-lived.
      */
     val assistantMemory: AssistantMemory? = null,
+    /**
+     * The host's display name for each permission preset, by wire value. A "you changed permission"
+     * line names the preset the way the composer's chip does, which for a deployment that renamed a
+     * shipped preset means the name it chose. Empty falls back to the id.
+     */
+    val permissionNames: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -223,7 +229,12 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
             node.code?.let { Text(" · $it", style = DsType.caption11, color = colors.labelTertiary) }
         }
 
-        is CommandNode -> CommandRow(node)
+        // A command the reader ran is their action, not the agent's: a muted system line, not a
+        // terminal row. A node that is not theirs keeps the row it always had.
+        is CommandNode -> {
+            val line = remember(node, context.nodes) { systemLineFor(node, context.nodes) }
+            if (line != null) SystemLineRow(line, context.permissionNames) else CommandRow(node)
+        }
 
         is WorkflowNode -> WorkflowRow(node.data, context.onOpenSubagent)
 
@@ -237,8 +248,9 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
         )
         // Unknown event types stay visible — that is the compatibility contract — but the
         // structural ones are not "unknown", they are bookkeeping, and printing `step/start` /
-        // `step/end` between every tool call buried the actual work in noise.
-        is OtherNode -> {
+        // `step/end` between every tool call buried the actual work in noise. Only known machine
+        // records are hidden; an unknown type stays visible even when marked `ignorable`.
+        is OtherNode -> if (node.drawsInTranscript()) {
             // The turn's settled file changes, listed the way the web client lists them. A payload
             // this build cannot read falls through to the raw disclosure like any other event.
             val changesTurn = if (node.type == "workspace/changes") changesTurn(node.data) else null
@@ -394,16 +406,13 @@ private fun UserMessageBubble(node: UserMessageNode, text: String, context: Chat
 private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContext) {
     val colors = DsTheme.colors
     val isLast = context.nodes.lastOrNull()?.seq == node.seq
-    // A message the harness marked as a cancelled turn's prefix arrives before that turn's end,
-    // so `running` is still true for a frame. Without this the last thing the user sees after
-    // tapping stop is the answer apparently still being written.
-    val streaming = context.running && isLast && !node.interrupted
+    // A running turn can end its current message before continuing with tools or another attempt.
+    // Only the provisional node is still being written; treating a settled tail as streaming adds
+    // a false caret and changes its height when the next row arrives, shifting the reader's text.
+    val streaming = node.streaming && context.running && isLast && !node.interrupted
     val knownToolCallIds = remember(context.nodes) {
         context.nodes.filterIsInstance<ToolCallNode>().mapTo(mutableSetOf()) { it.callId }
     }
-    // Bumping this before toggling means a tap after a long-press selection clears the selection
-    // first, instead of leaving it on screen with no way back.
-    val selectionDismiss = LocalSelectionDismiss.current
     // Keyed on the message's identity across its settling, not on `seq`: a streaming message's
     // sequence number is replaced by the durable one when the reply finishes, and state keyed on it
     // folded the reader's open thinking panel shut at that moment. See [assistantStateKey].
@@ -427,7 +436,6 @@ private fun AssistantMessage(node: AssistantMessageNode, context: ChatNodeContex
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = !streaming) {
-                selectionDismiss.intValue++
                 actionsVisible = !actionsVisible
             },
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -613,7 +621,16 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
         images.forEach { ref ->
             AttachmentImage(ref = ref, contentDescription = ref.name)
         }
-        result?.content?.let { JsonDisclosure(stringResource(R.string.chat_output_placeholder), it) }
+        // The text the tool returned, not the protocol JSON around it. A generic card has no output
+        // of its own, so the text sits right under the input; the specialised cards (a terminal, a
+        // diff, a read) already present the result in their body, so there it stays one row down.
+        result?.content?.let { content ->
+            if (card is com.labteto.dshmobile.ui.components.ToolCardView.GenericCard) {
+                ToolResultOutput(content, label = stringResource(R.string.chat_output_placeholder))
+            } else {
+                ToolResultOutputRow(stringResource(R.string.chat_output_placeholder), content)
+            }
+        }
         result?.meta?.let { JsonDisclosure(node.name, it) }
         PtcChildren(node.callId, context.nodes.filterIsInstance<OtherNode>())
     } }
@@ -647,6 +664,16 @@ private fun CompactionRow(node: CompactionNode) {
         }.getOrNull()
     }
     var expanded by remember(node.seq) { mutableStateOf(false) }
+    if (summaryText.isNullOrBlank()) {
+        // A summary the harness sent without text: keep the row as the marker of where the context
+        // was compacted, but give it no chevron, since there is nothing to open.
+        DisclosureRow(
+            title = stringResource(R.string.chat_compaction),
+            summary = stringResource(R.string.chat_compaction_summary),
+            icon = FeatherIcons.Archive,
+        )
+        return
+    }
     DisclosureRow(
         title = stringResource(R.string.chat_compaction),
         summary = stringResource(R.string.chat_compaction_summary),
@@ -654,7 +681,7 @@ private fun CompactionRow(node: CompactionNode) {
         expanded = expanded,
         onToggle = { expanded = !expanded },
     ) {
-        if (!summaryText.isNullOrBlank()) MarkdownText(summaryText)
+        MarkdownText(summaryText)
     }
 }
 
@@ -768,7 +795,8 @@ private fun WorkflowRow(
  * A bare string body is accepted too: some tools answer with one.
  */
 internal fun toolFailureMessage(content: JsonElement?): String? {
-    fun fromText(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }
+    // A failure whose text is itself a block list or envelope is unwrapped like any other output.
+    fun fromText(value: String?): String? = value?.let(::unwrapToolText)?.trim()?.takeIf { it.isNotEmpty() }
 
     /** First prose part at or below [element], depth-first, or null. */
     fun walk(element: JsonElement?): String? = when (element) {

@@ -46,6 +46,8 @@
     <string name="chatlist_sort_updated">Сортировать по дате обновления</string>
     <string name="chatlist_sort_manual">Вручную</string>
     <string name="chat_composer_hint">Напишите агенту…</string>
+    <string name="chat_composer_expand">Открыть полноэкранный редактор</string>
+    <string name="chat_composer_fullscreen_title">Сообщение</string>
     <string name="chat_composer_queue">Очередь</string>
     <string name="chat_composer_steer">Направить</string>
     <string name="chat_composer_stop">Стоп</string>
@@ -77,6 +79,9 @@
     <string name="chat_details_empty">Выберите строку инструмента в чате, чтобы увидеть, что ему передали и что он вернул.</string>
     <string name="chat_input_placeholder">Ввод</string>
     <string name="chat_output_placeholder">Вывод</string>
+    <string name="tool_output_show_raw">Показать исходный JSON</string>
+    <string name="tool_output_hide_raw">Скрыть исходный JSON</string>
+    <string name="tool_output_copy_raw">Копировать исходный JSON</string>
     <string name="goal_title">Цель</string>
     <string name="goal_none">Нет активной цели</string>
     <string name="goal_phase_active">Активна</string>
@@ -211,6 +216,8 @@
     <string name="time_months">%1$d мес</string>
     <string name="time_years">%1$d г</string>
     <string name="chatlist_open">Открыть чаты</string>
+    <string name="chatlist_hide">Скрыть чаты</string>
+    <string name="chatlist_show">Показать чаты</string>
     <string name="chatlist_workspace_rename">Переименовать проект</string>
     <string name="chatlist_workspace_delete">Убрать проект</string>
     <string name="chatlist_workspace_delete_confirm">Убрать этот проект из harness? Его папка и журналы сеансов останутся как есть.</string>
@@ -421,6 +428,15 @@
     <string name="harness_automation_history_not_found">Эта задача больше недоступна.</string>
     <string name="harness_automation_history_cursor_error">Записи изменились. Попробуйте ещё раз.</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">Вы изменили разрешение на «%1$s»</string>
+    <string name="system_line_permission_changed_plain">Вы изменили разрешение</string>
+    <string name="system_line_permission_failed">Не удалось изменить разрешение</string>
+    <string name="system_line_compact">Вы сжали разговор</string>
+    <string name="system_line_plan_on">Вы включили режим плана</string>
+    <string name="system_line_plan_off">Вы выключили режим плана</string>
+    <string name="system_line_command">Вы запустили %1$s</string>
+    <string name="system_line_command_failed">Не удалось выполнить %1$s</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">Откат до этого места</string>
     <string name="rewind_no_text">(без текста)</string>
@@ -516,10 +532,9 @@
     <string name="hold_replace_draft_confirm">Заменить</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">Лимиты и баланс</string>
+    <string name="quota_title">Использование</string>
     <string name="quota_short">5ч</string>
     <string name="quota_week">Неделя</string>
-    <string name="quota_unknown">Нет данных о лимитах</string>
     <string name="quota_refresh">Проверить</string>
     <string name="quota_checked">Проверено: %1$s</string>
     <string name="quota_all">Все провайдеры</string>
@@ -670,4 +685,34 @@
     <string name="hold_workspace_actions">Действия с папкой</string>
     <string name="chatlist_show_all">Показать все %1$d</string>
     <string name="chatlist_show_less">Показать меньше</string>
+    <string name="quota_session_title">Эта сессия</string>
+    <string name="quota_tokens_input">Вход</string>
+    <string name="quota_tokens_output">Выход</string>
+    <string name="quota_tokens_cache">Попадания в кэш</string>
+    <string name="quota_tokens_total">Всего</string>
+    <string name="quota_session_empty">Токены пока не использованы</string>
+    <string name="quota_balance_title">Баланс DeepSeek</string>
+    <string name="quota_balance_bonus">Бонус: %1$s</string>
+    <string name="quota_balance_failed">Не удалось загрузить баланс</string>
+    <string name="quota_limit_reached">Достигнут лимит использования</string>
+    <string name="quota_rate_limited">Слишком много запросов, попробуйте чуть позже</string>
+    <string name="quota_limit_short">Лимит исчерпан</string>
+    <string name="quota_rate_short">Лимит запросов</string>
+    <string name="permission_preset_read_only">Только чтение</string>
+    <string name="permission_preset_workspace_write">Запись в рабочей области</string>
+    <string name="permission_preset_full_access">Полный доступ</string>
+    <string name="permission_preset_auto">Автопроверка</string>
+    <string name="permission_preset_auto_desc">Запуск без песочницы после экспериментальной проверки той же моделью каждого вызова встроенного инструмента и внутреннего вызова PTC.</string>
+    <string name="shortcuts_group_message">Поле сообщения</string>
+    <string name="shortcuts_group_sessions">Сеансы</string>
+    <string name="shortcuts_group_general">Общие</string>
+    <string name="shortcuts_send">Отправить сообщение</string>
+    <string name="shortcuts_newline">Новая строка</string>
+    <string name="shortcuts_focus_composer">Перейти к полю сообщения</string>
+    <string name="shortcuts_new_session">Новый сеанс</string>
+    <string name="shortcuts_search_sessions">Искать сеансы</string>
+    <string name="shortcuts_toggle_list">Показать или скрыть сеансы</string>
+    <string name="shortcuts_settings">Открыть настройки</string>
+    <string name="shortcuts_close">Закрыть панель или диалог</string>
+    <string name="chat_drop_hint">Перетащите файлы сюда, чтобы прикрепить</string>
 </resources>

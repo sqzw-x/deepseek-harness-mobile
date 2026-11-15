@@ -46,7 +46,8 @@ private fun SessionEventEnvelope.sourceKindOf(): String? =
  *    on the `assistant/message` itself, and that wins; a `turn/end` whose reason
  *    kind is `interrupted`/`aborted`/`error` marks the turn's assistant node
  *    otherwise, which is all an rc.7 host gives.
- *  - unknown event types become [OtherNode] (merge-extensible contract).
+ *  - unknown event types become [OtherNode] (merge-extensible contract), carrying the harness's
+ *    `ignorable` marker so a renderer can tell a skippable plugin record from a required event.
  *
  * The fold is pure: same events → same snapshot.
  */
@@ -192,7 +193,8 @@ private class FoldState(private val sessionId: String) {
                 val turn = data.jsonObject["turn"]?.jsonPrimitive?.intOrNull ?: 0
                 val reason = data.jsonObject["reason"]?.jsonObject
                 val kind = reason?.get("kind")?.jsonPrimitive?.contentOrNull ?: "completed"
-                nodes.add(TurnEndNode(event.seq, turn, kind, reason?.get("reason")))
+                val failureCode = (reason?.get("error") as? JsonObject)?.get("code")?.let { it as? JsonPrimitive }?.contentOrNull
+                nodes.add(TurnEndNode(event.seq, turn, kind, reason?.get("reason"), failureCode))
                 if (kind == "interrupted" || kind == "aborted" || kind == "error") {
                     markInterrupted(turn)
                 }
@@ -311,9 +313,13 @@ private class FoldState(private val sessionId: String) {
             // Everything else passes through as an untyped row: the known ones because
             // presentation labels or hides them, the unknown ones because staying visible is the
             // compatibility contract. `EventClassification` says which is which.
+            //
+            // The harness's `ignorable` marker rides along as metadata, never a blanket skip rule.
+            // Presentation hides only machine records it recognises; future types stay visible,
+            // and Trajectory keeps the same journal regardless of how the chat presents them.
             in EventClassification.LOG_ONLY -> Unit
 
-            else -> nodes.add(OtherNode(event.seq, event.type, data))
+            else -> nodes.add(OtherNode(event.seq, event.type, data, ignorable = event.ignorable == true))
         }
     }
 

@@ -46,6 +46,8 @@
     <string name="chatlist_sort_updated">সর্বশেষ আপডেট অনুযায়ী সাজান</string>
     <string name="chatlist_sort_manual">ম্যানুয়াল ক্রম</string>
     <string name="chat_composer_hint">এজেন্টকে বার্তা পাঠান…</string>
+    <string name="chat_composer_expand">পূর্ণ স্ক্রিন সম্পাদক খুলুন</string>
+    <string name="chat_composer_fullscreen_title">বার্তা</string>
     <string name="chat_composer_queue">কিউ</string>
     <string name="chat_composer_steer">নির্দেশ দিন</string>
     <string name="chat_composer_stop">থামান</string>
@@ -77,6 +79,9 @@
     <string name="chat_details_empty">ইনপুট ও আউটপুট দেখতে চ্যাটে একটি টুল সারি বেছে নিন।</string>
     <string name="chat_input_placeholder">ইনপুট</string>
     <string name="chat_output_placeholder">আউটপুট</string>
+    <string name="tool_output_show_raw">মূল JSON দেখান</string>
+    <string name="tool_output_hide_raw">মূল JSON লুকান</string>
+    <string name="tool_output_copy_raw">মূল JSON কপি করুন</string>
     <string name="goal_title">লক্ষ্য</string>
     <string name="goal_none">কোনো চালু লক্ষ্য নেই</string>
     <string name="goal_phase_active">চালু</string>
@@ -211,6 +216,8 @@
     <string name="time_months">%1$d মাস</string>
     <string name="time_years">%1$d বছর</string>
     <string name="chatlist_open">চ্যাট খুলুন</string>
+    <string name="chatlist_hide">চ্যাট লুকান</string>
+    <string name="chatlist_show">চ্যাট দেখান</string>
     <string name="chatlist_workspace_rename">প্রজেক্টের নাম বদলান</string>
     <string name="chatlist_workspace_delete">প্রজেক্ট সরান</string>
     <string name="chatlist_workspace_delete_confirm">এই প্রজেক্টটি harness থেকে সরাবেন? এর ফোল্ডার আর সেশন লগ যেমন আছে তেমনই থাকবে।</string>
@@ -421,6 +428,15 @@
     <string name="harness_automation_history_not_found">এই কাজটি আর নেই।</string>
     <string name="harness_automation_history_cursor_error">রেকর্ড বদলে গেছে। আবার চেষ্টা করুন।</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">আপনি অনুমতি বদলে %1$s করেছেন</string>
+    <string name="system_line_permission_changed_plain">আপনি অনুমতি বদলেছেন</string>
+    <string name="system_line_permission_failed">অনুমতি বদলানো যায়নি</string>
+    <string name="system_line_compact">আপনি কথোপকথন ছোট করেছেন</string>
+    <string name="system_line_plan_on">আপনি প্ল্যান মোড চালু করেছেন</string>
+    <string name="system_line_plan_off">আপনি প্ল্যান মোড বন্ধ করেছেন</string>
+    <string name="system_line_command">আপনি %1$s চালিয়েছেন</string>
+    <string name="system_line_command_failed">%1$s চালানো যায়নি</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">এখান পর্যন্ত রিওয়াইন্ড করা হয়েছে</string>
     <string name="rewind_no_text">(কোনো টেক্সট নেই)</string>
@@ -516,10 +532,9 @@
     <string name="hold_replace_draft_confirm">বদলান</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">সীমা ও ব্যালেন্স</string>
+    <string name="quota_title">ব্যবহার</string>
     <string name="quota_short">৫ ঘণ্টা</string>
     <string name="quota_week">সপ্তাহ</string>
-    <string name="quota_unknown">সীমার তথ্য নেই</string>
     <string name="quota_refresh">আবার যাচাই করুন</string>
     <string name="quota_checked">যাচাই করা হয়েছে: %1$s</string>
     <string name="quota_all">সব প্রদানকারী</string>
@@ -670,4 +685,34 @@
     <string name="hold_workspace_actions">ফোল্ডারের বিকল্প</string>
     <string name="chatlist_show_all">সব %1$d দেখান</string>
     <string name="chatlist_show_less">কম দেখান</string>
+    <string name="quota_session_title">এই সেশন</string>
+    <string name="quota_tokens_input">ইনপুট</string>
+    <string name="quota_tokens_output">আউটপুট</string>
+    <string name="quota_tokens_cache">ক্যাশ হিট</string>
+    <string name="quota_tokens_total">মোট</string>
+    <string name="quota_session_empty">এখনও কোনো টোকেন ব্যবহার হয়নি</string>
+    <string name="quota_balance_title">DeepSeek ব্যালেন্স</string>
+    <string name="quota_balance_bonus">বোনাস: %1$s</string>
+    <string name="quota_balance_failed">ব্যালেন্স লোড করা যায়নি</string>
+    <string name="quota_limit_reached">ব্যবহারের সীমা শেষ হয়ে গেছে</string>
+    <string name="quota_rate_limited">অনেক বেশি অনুরোধ হয়েছে, একটু পরে আবার চেষ্টা করুন</string>
+    <string name="quota_limit_short">সীমা শেষ</string>
+    <string name="quota_rate_short">অনুরোধ সীমিত</string>
+    <string name="permission_preset_read_only">শুধু পড়া</string>
+    <string name="permission_preset_workspace_write">ওয়ার্কস্পেসে লেখা</string>
+    <string name="permission_preset_full_access">সম্পূর্ণ অ্যাক্সেস</string>
+    <string name="permission_preset_auto">স্বয়ংক্রিয় পর্যালোচনা</string>
+    <string name="permission_preset_auto_desc">প্রতিটি নেটিভ টুল কল এবং PTC অভ্যন্তরীণ কলের আগে একই মডেলের পরীক্ষামূলক পর্যালোচনার পরে স্যান্ডবক্স ছাড়াই চলে।</string>
+    <string name="shortcuts_group_message">বার্তার ঘর</string>
+    <string name="shortcuts_group_sessions">সেশন</string>
+    <string name="shortcuts_group_general">সাধারণ</string>
+    <string name="shortcuts_send">বার্তা পাঠান</string>
+    <string name="shortcuts_newline">নতুন লাইন</string>
+    <string name="shortcuts_focus_composer">বার্তার ঘরে যান</string>
+    <string name="shortcuts_new_session">নতুন সেশন</string>
+    <string name="shortcuts_search_sessions">সেশন খুঁজুন</string>
+    <string name="shortcuts_toggle_list">সেশন দেখান বা লুকান</string>
+    <string name="shortcuts_settings">সেটিংস খুলুন</string>
+    <string name="shortcuts_close">শিট বা ডায়ালগ বন্ধ করুন</string>
+    <string name="chat_drop_hint">সংযুক্ত করতে ফাইলগুলো এখানে ছেড়ে দিন</string>
 </resources>

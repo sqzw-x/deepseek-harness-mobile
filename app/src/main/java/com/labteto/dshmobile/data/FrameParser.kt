@@ -29,6 +29,10 @@ import kotlinx.serialization.json.jsonObject
  * The journal's event form is already flat — type, seq, time, raw `data` — so unlike
  * [sessionEventToEnvelope] this needs no round-trip through a typed DTO. `surfaceOp` is
  * stringified for the envelope exactly as the typed path does it.
+ *
+ * This is the path every history page, follow snapshot and live entry takes, so anything the fold
+ * needs from the envelope has to be copied here. The `ignorable` flag survives on unknown events;
+ * the transcript hides only explicitly recognised noise, leaving future event types visible.
  */
 fun wireEventToEnvelope(event: SessionWireEvent): SessionEventEnvelope = SessionEventEnvelope(
     type = event.type,
@@ -38,6 +42,7 @@ fun wireEventToEnvelope(event: SessionWireEvent): SessionEventEnvelope = Session
     surfaceOp = event.surfaceOp?.let { raw ->
         (raw as? JsonPrimitive)?.contentOrNull ?: raw.toString()
     },
+    ignorable = event.ignorable,
 )
 
 /**

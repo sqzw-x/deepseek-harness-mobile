@@ -37,7 +37,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -51,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.core.session.AssistantMessageNode
@@ -58,11 +58,11 @@ import com.labteto.dshmobile.core.session.ConversationSnapshot
 import com.labteto.dshmobile.core.session.TurnStartNode
 import com.labteto.dshmobile.core.session.UserMessageNode
 import com.labteto.dshmobile.diag.RenderStats
-import com.labteto.dshmobile.ui.components.LocalSelectionDismiss
 import com.labteto.dshmobile.ui.components.DsButton
 import com.labteto.dshmobile.ui.components.DsButtonSize
 import com.labteto.dshmobile.ui.components.DsButtonVariant
 import com.labteto.dshmobile.ui.components.EmptyHero
+import com.labteto.dshmobile.ui.components.clearSelectionOnTap
 import com.labteto.dshmobile.ui.components.skeleton
 import com.labteto.dshmobile.ui.theme.DsTheme
 import com.labteto.dshmobile.ui.theme.DsType
@@ -144,6 +144,11 @@ internal fun ChatTranscript(
     onLoadOlder: () -> Unit,
     onLaidOut: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Extra room at each side, so the rows keep to a reading width centred in a wide pane while the
+     * list itself still spans the pane and scrolls from anywhere on it.
+     */
+    gutter: Dp = 0.dp,
     /** A message the reader picked out of the history sheet, still waiting to be scrolled to. */
     jumpToSeq: Long? = null,
     onJumpConsumed: () -> Unit = {},
@@ -224,8 +229,8 @@ internal fun ChatTranscript(
         // or a reader scrolling to the top of the frozen page meets a Load older row that never
         // resolves. Rows are newest-first, so anything older than the snapshot's oldest seq belongs
         // below it.
-        val oldest = frozen.lastOrNull()?.seq ?: return@let rows
-        frozen + rows.filter { it.seq < oldest }
+        val oldest = frozen.lastOrNull()?.sourceSeq ?: return@let rows
+        frozen + rows.filter { it.sourceSeq < oldest }
     } ?: rows
     val itemCount = displayRows.size + if (hasMore) 1 else 0
 
@@ -368,9 +373,6 @@ internal fun ChatTranscript(
     // is being measured is the first one after the state swap, which is the one the reader waits
     // through.
     var laidOut by remember(sessionId) { mutableStateOf(false) }
-    // Shared by every row: a tap increments it and the selectable texts rebuild without their
-    // selection. Without a provider the token stays 0 forever and a selection cannot be cleared.
-    val selectionDismiss = remember { mutableIntStateOf(0) }
     // Rows that arrived below the reader since they last left the tail, counted against the
     // newest row they had seen. Paging adds rows too, but at the far end, so it cannot inflate this.
     var seenNewestKey by remember(sessionId) { mutableStateOf<Any?>(null) }
@@ -413,8 +415,8 @@ internal fun ChatTranscript(
         if (listState.firstVisibleItemIndex > JUMP_SNAP_ROWS) listState.scrollToItem(JUMP_SNAP_ROWS)
         listState.animateScrollToItem(0)
     }
-    CompositionLocalProvider(LocalSelectionDismiss provides selectionDismiss) {
-    Box(modifier.fillMaxSize()) {
+    // A tap anywhere on the transcript ends a text selection made in it (issue #90); see the modifier.
+    Box(modifier.fillMaxSize().clearSelectionOnTap()) {
     LazyColumn(
         state = listState,
         modifier = Modifier
@@ -425,7 +427,7 @@ internal fun ChatTranscript(
                     onLaidOut(rows.size)
                 }
             },
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp + gutter, vertical = 10.dp),
         // Newest first, so the row the viewport anchors on is the one that grows.
         reverseLayout = true,
         // Still bottom-aligned: a transcript shorter than the viewport belongs above the composer,
@@ -533,7 +535,6 @@ internal fun ChatTranscript(
                 }
             },
         )
-    }
     }
     }
 }

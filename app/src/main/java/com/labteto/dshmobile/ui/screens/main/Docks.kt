@@ -9,7 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Bolt
@@ -57,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.labteto.dshmobile.R
 import com.labteto.dshmobile.core.session.QueueItem
+import com.labteto.dshmobile.core.usage.compactCount
 import com.labteto.dshmobile.core.wire.dto.GoalPhase
 import com.labteto.dshmobile.core.wire.dto.GoalSnapshot
 import com.labteto.dshmobile.core.wire.dto.SessionStatsView
@@ -79,7 +82,6 @@ import com.labteto.dshmobile.ui.components.rememberCopier
 import com.labteto.dshmobile.ui.components.rememberDsHaptics
 import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.formatDurationMs
-import com.labteto.dshmobile.ui.components.formatTokens
 import com.labteto.dshmobile.ui.theme.DsAnimations
 import com.labteto.dshmobile.ui.theme.DsShapes
 import com.labteto.dshmobile.ui.theme.DsSizes
@@ -284,6 +286,13 @@ internal fun GoalSummary(goal: GoalSnapshot) {
 }
 
 /**
+ * Tallest a goal's text may grow in the dock, the details panel and the edit field before it
+ * scrolls on its own. A goal can run to thousands of characters; uncapped, it would push the
+ * Pause, Edit and Clear actions below it off screen.
+ */
+internal val GoalTextMaxHeight = 240.dp
+
+/**
  * The live goal bar above the composer: the mock's compact card, expanding into its verbs.
  *
  * The mock's round meter (`3/10`) needs a completed-round count the goal projection does not
@@ -319,6 +328,10 @@ internal fun GoalBar(goal: GoalSnapshot, store: SessionStore, modifier: Modifier
             goal.objective,
             style = DsType.small13,
             color = colors.labelSecondary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = GoalTextMaxHeight)
+                .verticalScroll(rememberScrollState()),
         )
         goal.blockedReason?.let {
             Text(
@@ -427,17 +440,29 @@ internal fun GoalActions(
         )
     }
     if (editing) {
-        DsDialog(title = stringResource(R.string.goal_edit), onDismiss = { editing = false }) {
-            TextField(
-                minLines = 3,
-                value = editText,
-                onValueChange = { editText = it },
-                modifier = Modifier.fillMaxWidth().inkFieldFrame(),
-                placeholder = { Text(stringResource(R.string.goal_title), style = DsType.std14) },
-                colors = dialogTextFieldColors(),
-                shape = DsShapes.control,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        DsDialog(
+            title = stringResource(R.string.goal_edit),
+            onDismiss = { editing = false },
+            body = {
+                TextField(
+                    minLines = 3,
+                    value = editText,
+                    onValueChange = { editText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = GoalTextMaxHeight)
+                        .inkFieldFrame(),
+                    placeholder = { Text(stringResource(R.string.goal_title), style = DsType.std14) },
+                    colors = dialogTextFieldColors(),
+                    shape = DsShapes.control,
+                )
+            },
+            actions = {
+                DsButton(
+                    text = stringResource(R.string.common_cancel),
+                    onClick = { editing = false },
+                    variant = DsButtonVariant.Ghost,
+                )
                 DsButton(
                     text = stringResource(R.string.common_ok),
                     onClick = {
@@ -446,13 +471,8 @@ internal fun GoalActions(
                     },
                     variant = DsButtonVariant.Info,
                 )
-                DsButton(
-                    text = stringResource(R.string.common_cancel),
-                    onClick = { editing = false },
-                    variant = DsButtonVariant.Ghost,
-                )
-            }
-        }
+            },
+        )
     }
 }
 
@@ -712,14 +732,18 @@ internal fun StatsFooter(
                     ),
                 )
             }
-            usage?.let {
+            val extra = quotaText.takeIf { text -> text.isNotBlank() }
+            if (usage != null) {
+                val labels = quotaLabels()
                 DetailLine(
                     stringResource(
                         R.string.chat_stats_tokens,
-                        formatTokens(it.inputTokens),
-                        formatTokens(it.outputTokens),
-                    ) + quotaText.takeIf { text -> text.isNotBlank() }?.let { text -> " · $text" }.orEmpty(),
+                        compactCount(usage.inputTokens, labels),
+                        compactCount(usage.outputTokens, labels),
+                    ) + extra?.let { text -> " · $text" }.orEmpty(),
                 )
+            } else if (extra != null) {
+                DetailLine(extra)
             }
         }
     }

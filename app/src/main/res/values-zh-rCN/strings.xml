@@ -46,6 +46,8 @@
     <string name="chatlist_sort_updated">按最近更新排序</string>
     <string name="chatlist_sort_manual">手动排序</string>
     <string name="chat_composer_hint">给智能体发消息…</string>
+    <string name="chat_composer_expand">打开全屏编辑器</string>
+    <string name="chat_composer_fullscreen_title">消息</string>
     <string name="chat_composer_queue">队列</string>
     <string name="chat_composer_steer">引导</string>
     <string name="chat_composer_stop">停止</string>
@@ -77,6 +79,9 @@
     <string name="chat_details_empty">在对话中点选一个工具行，查看它的输入和输出。</string>
     <string name="chat_input_placeholder">输入</string>
     <string name="chat_output_placeholder">输出</string>
+    <string name="tool_output_show_raw">查看原始 JSON</string>
+    <string name="tool_output_hide_raw">收起原始 JSON</string>
+    <string name="tool_output_copy_raw">复制原始 JSON</string>
     <string name="goal_title">目标</string>
     <string name="goal_none">没有进行中的目标</string>
     <string name="goal_phase_active">进行中</string>
@@ -211,6 +216,8 @@
     <string name="time_months">%1$d 个月</string>
     <string name="time_years">%1$d 年</string>
     <string name="chatlist_open">打开会话列表</string>
+    <string name="chatlist_hide">隐藏会话列表</string>
+    <string name="chatlist_show">显示会话列表</string>
     <string name="chatlist_workspace_rename">重命名项目</string>
     <string name="chatlist_workspace_delete">移除项目</string>
     <string name="chatlist_workspace_delete_confirm">要从 harness 中移除这个项目吗？它的文件夹和会话日志都会保留。</string>
@@ -421,6 +428,15 @@
     <string name="harness_automation_history_not_found">此任务已不可用。</string>
     <string name="harness_automation_history_cursor_error">运行记录有变化，请重试。</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">你把权限改成了%1$s</string>
+    <string name="system_line_permission_changed_plain">你修改了权限</string>
+    <string name="system_line_permission_failed">权限没有修改成功</string>
+    <string name="system_line_compact">你压缩了对话</string>
+    <string name="system_line_plan_on">你开启了计划模式</string>
+    <string name="system_line_plan_off">你关闭了计划模式</string>
+    <string name="system_line_command">你运行了 %1$s</string>
+    <string name="system_line_command_failed">%1$s 没有执行成功</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">已回退到此处</string>
     <string name="rewind_no_text">（无文本）</string>
@@ -516,10 +532,9 @@
     <string name="hold_replace_draft_confirm">替换</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">限额与余额</string>
+    <string name="quota_title">用量</string>
     <string name="quota_short">5小时</string>
     <string name="quota_week">每周</string>
-    <string name="quota_unknown">暂无限额数据</string>
     <string name="quota_refresh">重新检查</string>
     <string name="quota_checked">已检查：%1$s</string>
     <string name="quota_all">所有提供商</string>
@@ -670,4 +685,34 @@
     <string name="hold_workspace_actions">文件夹操作</string>
     <string name="chatlist_show_all">显示全部 %1$d</string>
     <string name="chatlist_show_less">收起</string>
+    <string name="quota_session_title">本次会话</string>
+    <string name="quota_tokens_input">输入</string>
+    <string name="quota_tokens_output">输出</string>
+    <string name="quota_tokens_cache">缓存命中</string>
+    <string name="quota_tokens_total">合计</string>
+    <string name="quota_session_empty">还没有使用任何 token</string>
+    <string name="quota_balance_title">DeepSeek 余额</string>
+    <string name="quota_balance_bonus">赠金：%1$s</string>
+    <string name="quota_balance_failed">无法加载余额</string>
+    <string name="quota_limit_reached">已达到用量上限</string>
+    <string name="quota_rate_limited">请求太频繁，请稍后再试</string>
+    <string name="quota_limit_short">已达上限</string>
+    <string name="quota_rate_short">请求受限</string>
+    <string name="permission_preset_read_only">仅可查看</string>
+    <string name="permission_preset_workspace_write">工作区内修改</string>
+    <string name="permission_preset_full_access">完全权限</string>
+    <string name="permission_preset_auto">自动审查</string>
+    <string name="permission_preset_auto_desc">无沙箱运行；每次原生工具调用和 PTC 内层调用前由同一模型进行实验性审查。</string>
+    <string name="shortcuts_group_message">消息框</string>
+    <string name="shortcuts_group_sessions">会话</string>
+    <string name="shortcuts_group_general">通用</string>
+    <string name="shortcuts_send">发送消息</string>
+    <string name="shortcuts_newline">换行</string>
+    <string name="shortcuts_focus_composer">跳到消息框</string>
+    <string name="shortcuts_new_session">新建会话</string>
+    <string name="shortcuts_search_sessions">搜索会话</string>
+    <string name="shortcuts_toggle_list">显示或隐藏会话</string>
+    <string name="shortcuts_settings">打开设置</string>
+    <string name="shortcuts_close">关闭面板或对话框</string>
+    <string name="chat_drop_hint">将文件拖到这里即可添加</string>
 </resources>

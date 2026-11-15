@@ -46,6 +46,8 @@
     <string name="chatlist_sort_updated">เรียงตามการอัปเดตล่าสุด</string>
     <string name="chatlist_sort_manual">เรียงเอง</string>
     <string name="chat_composer_hint">ส่งข้อความถึงเอเจนต์…</string>
+    <string name="chat_composer_expand">เปิดตัวแก้ไขแบบเต็มหน้าจอ</string>
+    <string name="chat_composer_fullscreen_title">ข้อความ</string>
     <string name="chat_composer_queue">คิว</string>
     <string name="chat_composer_steer">แทรก</string>
     <string name="chat_composer_stop">หยุด</string>
@@ -77,6 +79,9 @@
     <string name="chat_details_empty">เลือกแถวเครื่องมือในแชทเพื่อดูอินพุตและเอาต์พุต</string>
     <string name="chat_input_placeholder">อินพุต</string>
     <string name="chat_output_placeholder">เอาต์พุต</string>
+    <string name="tool_output_show_raw">แสดง JSON ดิบ</string>
+    <string name="tool_output_hide_raw">ซ่อน JSON ดิบ</string>
+    <string name="tool_output_copy_raw">คัดลอก JSON ดิบ</string>
     <string name="goal_title">เป้าหมาย</string>
     <string name="goal_none">ไม่มีเป้าหมายที่ใช้งานอยู่</string>
     <string name="goal_phase_active">ใช้งานอยู่</string>
@@ -211,6 +216,8 @@
     <string name="time_months">%1$d เดือน</string>
     <string name="time_years">%1$d ปี</string>
     <string name="chatlist_open">เปิดรายการแชท</string>
+    <string name="chatlist_hide">ซ่อนรายการแชท</string>
+    <string name="chatlist_show">แสดงรายการแชท</string>
     <string name="chatlist_workspace_rename">เปลี่ยนชื่อโปรเจกต์</string>
     <string name="chatlist_workspace_delete">นำโปรเจกต์ออก</string>
     <string name="chatlist_workspace_delete_confirm">นำโปรเจกต์นี้ออกจาก harness หรือไม่ โฟลเดอร์และบันทึกเซสชันของโปรเจกต์ยังอยู่เหมือนเดิม</string>
@@ -421,6 +428,15 @@
     <string name="harness_automation_history_not_found">งานนี้ไม่พร้อมใช้งานแล้ว</string>
     <string name="harness_automation_history_cursor_error">ประวัติมีการเปลี่ยนแปลง ลองอีกครั้ง</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">คุณเปลี่ยนสิทธิ์เป็น %1$s</string>
+    <string name="system_line_permission_changed_plain">คุณเปลี่ยนสิทธิ์</string>
+    <string name="system_line_permission_failed">เปลี่ยนสิทธิ์ไม่สำเร็จ</string>
+    <string name="system_line_compact">คุณบีบอัดการสนทนา</string>
+    <string name="system_line_plan_on">คุณเปิดโหมดวางแผน</string>
+    <string name="system_line_plan_off">คุณปิดโหมดวางแผน</string>
+    <string name="system_line_command">คุณรัน %1$s</string>
+    <string name="system_line_command_failed">รัน %1$s ไม่สำเร็จ</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">ย้อนกลับมาถึงตรงนี้</string>
     <string name="rewind_no_text">(ไม่มีข้อความ)</string>
@@ -516,10 +532,9 @@
     <string name="hold_replace_draft_confirm">แทนที่</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">ขีดจำกัดและยอดคงเหลือ</string>
+    <string name="quota_title">การใช้งาน</string>
     <string name="quota_short">5 ชม.</string>
     <string name="quota_week">สัปดาห์</string>
-    <string name="quota_unknown">ไม่มีข้อมูลขีดจำกัด</string>
     <string name="quota_refresh">ตรวจสอบอีกครั้ง</string>
     <string name="quota_checked">ตรวจสอบแล้ว: %1$s</string>
     <string name="quota_all">ผู้ให้บริการทั้งหมด</string>
@@ -670,4 +685,34 @@
     <string name="hold_workspace_actions">การทำงานกับโฟลเดอร์</string>
     <string name="chatlist_show_all">แสดงทั้งหมด %1$d</string>
     <string name="chatlist_show_less">แสดงน้อยลง</string>
+    <string name="quota_session_title">เซสชันนี้</string>
+    <string name="quota_tokens_input">อินพุต</string>
+    <string name="quota_tokens_output">เอาต์พุต</string>
+    <string name="quota_tokens_cache">แคชฮิต</string>
+    <string name="quota_tokens_total">รวม</string>
+    <string name="quota_session_empty">ยังไม่มีการใช้โทเคน</string>
+    <string name="quota_balance_title">ยอดเงิน DeepSeek</string>
+    <string name="quota_balance_bonus">โบนัส: %1$s</string>
+    <string name="quota_balance_failed">โหลดยอดเงินไม่สำเร็จ</string>
+    <string name="quota_limit_reached">ถึงขีดจำกัดการใช้งานแล้ว</string>
+    <string name="quota_rate_limited">ส่งคำขอถี่เกินไป ลองใหม่อีกครั้งในอีกสักครู่</string>
+    <string name="quota_limit_short">ถึงขีดจำกัดแล้ว</string>
+    <string name="quota_rate_short">ถูกจำกัดคำขอ</string>
+    <string name="permission_preset_read_only">อ่านอย่างเดียว</string>
+    <string name="permission_preset_workspace_write">เขียนในเวิร์กสเปซ</string>
+    <string name="permission_preset_full_access">เข้าถึงทั้งหมด</string>
+    <string name="permission_preset_auto">ตรวจสอบอัตโนมัติ</string>
+    <string name="permission_preset_auto_desc">รันโดยไม่มีแซนด์บ็อกซ์ หลังจากการตรวจสอบเชิงทดลองโดยโมเดลเดียวกันสำหรับการเรียกใช้เครื่องมือเนทีฟและการเรียก PTC ภายในทุกครั้ง</string>
+    <string name="shortcuts_group_message">ช่องข้อความ</string>
+    <string name="shortcuts_group_sessions">เซสชัน</string>
+    <string name="shortcuts_group_general">ทั่วไป</string>
+    <string name="shortcuts_send">ส่งข้อความ</string>
+    <string name="shortcuts_newline">ขึ้นบรรทัดใหม่</string>
+    <string name="shortcuts_focus_composer">ไปที่ช่องข้อความ</string>
+    <string name="shortcuts_new_session">เซสชันใหม่</string>
+    <string name="shortcuts_search_sessions">ค้นหาเซสชัน</string>
+    <string name="shortcuts_toggle_list">แสดงหรือซ่อนเซสชัน</string>
+    <string name="shortcuts_settings">เปิดการตั้งค่า</string>
+    <string name="shortcuts_close">ปิดแผ่นหรือกล่องโต้ตอบ</string>
+    <string name="chat_drop_hint">วางไฟล์ที่นี่เพื่อแนบ</string>
 </resources>

@@ -59,6 +59,7 @@ import com.labteto.dshmobile.ui.components.MascotMark
 import com.labteto.dshmobile.ui.components.MascotState
 import com.labteto.dshmobile.ui.components.rememberDsToast
 import com.labteto.dshmobile.ui.screens.connect.ConnectScreen
+import com.labteto.dshmobile.ui.adaptive.FormPane
 import com.labteto.dshmobile.ui.screens.main.MainScreen
 import com.labteto.dshmobile.ui.screens.pair.PairScreen
 import com.labteto.dshmobile.ui.screens.settings.SettingsScreen
@@ -68,6 +69,9 @@ import com.labteto.dshmobile.ui.theme.DsShapes
 import com.labteto.dshmobile.ui.theme.DsSpacing
 import com.labteto.dshmobile.ui.theme.DsTheme
 import com.labteto.dshmobile.ui.theme.DsType
+import com.labteto.dshmobile.ui.input.rememberFocusRingIndication
+import com.labteto.dshmobile.ui.adaptive.CaptionBarStyle
+import com.labteto.dshmobile.ui.theme.isDsDark
 import com.labteto.dshmobile.ui.theme.DshTheme
 import com.labteto.dshmobile.ui.theme.FontSizeOption
 import com.labteto.dshmobile.ui.theme.HapticStrength
@@ -110,8 +114,14 @@ fun AppRoot(viewModel: AppViewModel = hiltViewModel()) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.checkForUpdate(BuildConfig.VERSION_NAME) }
 
     // `AndroidHapticPlatform` is the Android half of the shared haptic vocabulary (AndroidHaptics.kt).
-    DshTheme(customization = customization, hapticPlatform = AndroidHapticPlatform) {
+    DshTheme(
+        customization = customization,
+        hapticPlatform = AndroidHapticPlatform,
+        // A visible ring on whatever has keyboard focus, for Tab on a Chromebook or a docked tablet.
+        indication = { base, accent -> rememberFocusRingIndication(base, accent) },
+    ) {
         val toast = rememberDsToast()
+        CaptionBarStyle(dark = isDsDark(customization), background = DsTheme.colors.bgBase)
         // Hidden, not dismissed: an install that was handed to Termux should not also record
         // the release as declined, or a failed download would never be offered again.
         var updateHidden by rememberSaveable { mutableStateOf(false) }
@@ -172,16 +182,20 @@ fun AppRoot(viewModel: AppViewModel = hiltViewModel()) {
                 label = "rootRoute",
             ) { current ->
                 when (current) {
-                    RootRoute.Settings -> SettingsScreen(onClose = { showSettings = false })
-                    RootRoute.Pair -> PairScreen(onClose = { showPair = false }, prefillUrl = pairUrl)
+                    // The forms are one column of fields: held to a readable width and centred on a
+                    // wide window, instead of stretched edge to edge across a tablet.
+                    RootRoute.Settings -> FormPane { SettingsScreen(onClose = { showSettings = false }) }
+                    RootRoute.Pair -> FormPane { PairScreen(onClose = { showPair = false }, prefillUrl = pairUrl) }
                     RootRoute.Main -> MainScreen(onOpenSettings = { showSettings = true })
-                    RootRoute.Connect -> ConnectScreen(
-                        onOpenSettings = { showSettings = true },
-                        onPair = { url ->
-                            pairUrl = url
-                            showPair = true
-                        },
-                    )
+                    RootRoute.Connect -> FormPane {
+                        ConnectScreen(
+                            onOpenSettings = { showSettings = true },
+                            onPair = { url ->
+                                pairUrl = url
+                                showPair = true
+                            },
+                        )
+                    }
                 }
             }
             AnimatedVisibility(

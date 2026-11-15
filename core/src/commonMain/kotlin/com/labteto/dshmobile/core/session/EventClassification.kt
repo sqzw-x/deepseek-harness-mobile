@@ -110,6 +110,10 @@ object EventClassification {
      * (`system/message`, `request/context`, `image/offload`), render them properly
      * (`deliverables/presented`) or hide them as structural noise (`step/start`, `step/end`) —
      * see `STRUCTURAL_EVENT_TYPES` in the app's `ChatNodeItem`.
+     *
+     * `ignorable` does not change that contract: a future event remains visible even when its
+     * author considers it optional. Presentation filters only event types it explicitly recognises
+     * as structural or machine noise; Trajectory retains every journal entry regardless.
      */
     val PASSTHROUGH: Set<String> = setOf(
         "step/start",

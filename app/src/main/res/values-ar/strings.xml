@@ -46,6 +46,8 @@
     <string name="chatlist_sort_updated">ترتيب حسب آخر تحديث</string>
     <string name="chatlist_sort_manual">ترتيب يدوي</string>
     <string name="chat_composer_hint">أرسل رسالة إلى الوكيل…</string>
+    <string name="chat_composer_expand">فتح المحرر بملء الشاشة</string>
+    <string name="chat_composer_fullscreen_title">رسالة</string>
     <string name="chat_composer_queue">قائمة الانتظار</string>
     <string name="chat_composer_steer">توجيه</string>
     <string name="chat_composer_stop">إيقاف</string>
@@ -77,6 +79,9 @@
     <string name="chat_details_empty">حدد صف أداة في المحادثة لعرض المدخلات والمخرجات.</string>
     <string name="chat_input_placeholder">المدخلات</string>
     <string name="chat_output_placeholder">المخرجات</string>
+    <string name="tool_output_show_raw">عرض JSON الخام</string>
+    <string name="tool_output_hide_raw">إخفاء JSON الخام</string>
+    <string name="tool_output_copy_raw">نسخ JSON الخام</string>
     <string name="goal_title">الهدف</string>
     <string name="goal_none">لا يوجد هدف نشط</string>
     <string name="goal_phase_active">نشط</string>
@@ -211,6 +216,8 @@
     <string name="time_months">%1$d ش</string>
     <string name="time_years">%1$d سنة</string>
     <string name="chatlist_open">فتح المحادثات</string>
+    <string name="chatlist_hide">إخفاء المحادثات</string>
+    <string name="chatlist_show">إظهار المحادثات</string>
     <string name="chatlist_workspace_rename">إعادة تسمية المشروع</string>
     <string name="chatlist_workspace_delete">إزالة المشروع</string>
     <string name="chatlist_workspace_delete_confirm">إزالة هذا المشروع من harness؟ يبقى مجلده وسجلات جلساته كما هي.</string>
@@ -421,6 +428,15 @@
     <string name="harness_automation_history_not_found">لم تعد هذه المهمة متاحة.</string>
     <string name="harness_automation_history_cursor_error">تغيّرت السجلات. حاول مرة أخرى.</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">غيّرت الإذن إلى %1$s</string>
+    <string name="system_line_permission_changed_plain">غيّرت الإذن</string>
+    <string name="system_line_permission_failed">لم يكتمل تغيير الإذن</string>
+    <string name="system_line_compact">ضغطت المحادثة</string>
+    <string name="system_line_plan_on">فعّلت وضع الخطة</string>
+    <string name="system_line_plan_off">عطّلت وضع الخطة</string>
+    <string name="system_line_command">شغّلت %1$s</string>
+    <string name="system_line_command_failed">تعذّر تشغيل %1$s</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">تمت الإعادة إلى هنا</string>
     <string name="rewind_no_text">(بدون نص)</string>
@@ -516,10 +532,9 @@
     <string name="hold_replace_draft_confirm">استبدال</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">الحدود والرصيد</string>
+    <string name="quota_title">الاستخدام</string>
     <string name="quota_short">٥ س</string>
     <string name="quota_week">الأسبوع</string>
-    <string name="quota_unknown">لا توجد بيانات عن الحدود</string>
     <string name="quota_refresh">إعادة التحقق</string>
     <string name="quota_checked">تم التحقق: %1$s</string>
     <string name="quota_all">كل المزوّدين</string>
@@ -670,4 +685,34 @@
     <string name="hold_workspace_actions">إجراءات المجلد</string>
     <string name="chatlist_show_all">عرض الكل %1$d</string>
     <string name="chatlist_show_less">عرض أقل</string>
+    <string name="quota_session_title">هذه الجلسة</string>
+    <string name="quota_tokens_input">الإدخال</string>
+    <string name="quota_tokens_output">الإخراج</string>
+    <string name="quota_tokens_cache">الذاكرة المؤقتة</string>
+    <string name="quota_tokens_total">الإجمالي</string>
+    <string name="quota_session_empty">لم تُستخدم أي رموز بعد</string>
+    <string name="quota_balance_title">رصيد DeepSeek</string>
+    <string name="quota_balance_bonus">مكافأة: %1$s</string>
+    <string name="quota_balance_failed">تعذّر تحميل الرصيد</string>
+    <string name="quota_limit_reached">تم بلوغ حد الاستخدام</string>
+    <string name="quota_rate_limited">عدد الطلبات كبير، حاول مرة أخرى بعد قليل</string>
+    <string name="quota_limit_short">تم بلوغ الحد</string>
+    <string name="quota_rate_short">الطلبات محدودة</string>
+    <string name="permission_preset_read_only">قراءة فقط</string>
+    <string name="permission_preset_workspace_write">كتابة في مساحة العمل</string>
+    <string name="permission_preset_full_access">وصول كامل</string>
+    <string name="permission_preset_auto">مراجعة تلقائية</string>
+    <string name="permission_preset_auto_desc">يعمل بدون صندوق حماية بعد مراجعة تجريبية من نفس النموذج لكل استدعاء أداة أصلي وكل استدعاء PTC داخلي.</string>
+    <string name="shortcuts_group_message">مربع الرسالة</string>
+    <string name="shortcuts_group_sessions">الجلسات</string>
+    <string name="shortcuts_group_general">عام</string>
+    <string name="shortcuts_send">إرسال الرسالة</string>
+    <string name="shortcuts_newline">سطر جديد</string>
+    <string name="shortcuts_focus_composer">الانتقال إلى مربع الرسالة</string>
+    <string name="shortcuts_new_session">جلسة جديدة</string>
+    <string name="shortcuts_search_sessions">البحث في الجلسات</string>
+    <string name="shortcuts_toggle_list">إظهار الجلسات أو إخفاؤها</string>
+    <string name="shortcuts_settings">فتح الإعدادات</string>
+    <string name="shortcuts_close">إغلاق النافذة أو الحوار</string>
+    <string name="chat_drop_hint">أفلت الملفات هنا لإرفاقها</string>
 </resources>

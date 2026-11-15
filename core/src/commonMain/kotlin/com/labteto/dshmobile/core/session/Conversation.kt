@@ -35,7 +35,8 @@ sealed interface ChatNode {
 }
 
 data class TurnStartNode(override val seq: Long, val turn: Int) : ChatNode
-data class TurnEndNode(override val seq: Long, val turn: Int, val reasonKind: String, val reasonDetail: JsonElement? = null) : ChatNode
+/** [failureCode] is the `error.code` of a turn that ended in an `error`, such as `QUOTA` or `RATE_LIMIT`. */
+data class TurnEndNode(override val seq: Long, val turn: Int, val reasonKind: String, val reasonDetail: JsonElement? = null, val failureCode: String? = null) : ChatNode
 
 data class UserMessageNode(
     override val seq: Long,
@@ -139,7 +140,29 @@ data class CommandNode(override val seq: Long, val kind: String, val data: JsonE
 data class TitleNode(override val seq: Long, val title: String) : ChatNode
 data class WorkflowNode(override val seq: Long, val kind: String, val data: JsonElement) : ChatNode
 data class SubagentNode(override val seq: Long, val data: JsonElement) : ChatNode
-data class OtherNode(override val seq: Long, val type: String, val data: JsonElement) : ChatNode
+/**
+ * An event this build draws no typed node for: a [EventClassification.PASSTHROUGH] type the
+ * presentation layer labels or hides, or a type this build has never heard of.
+ *
+ * [ignorable] is the harness's own envelope marker, carried verbatim. It means "a reader that does
+ * not recognise this type may skip it", which is exactly how the harness writes plugin records
+ * (`plugin:<owner>/<record>`, such as the translator's request and result): retained in the log,
+ * never part of the conversation.
+ */
+data class OtherNode(
+    override val seq: Long,
+    val type: String,
+    val data: JsonElement,
+    val ignorable: Boolean = false,
+) : ChatNode {
+    /**
+     * Wire metadata: the host marked a type this build does not classify as optional. This is not
+     * a visibility decision: the transcript still renders unknown types and filters only machine
+     * noise it explicitly recognises. Trajectory retains the journal regardless of this hint.
+     */
+    val isSkippableUnknown: Boolean
+        get() = ignorable && type !in EventClassification.CLASSIFIED
+}
 
 /** One pending queue item (from the session/queue frame snapshot). */
 data class QueueItem(

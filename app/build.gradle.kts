@@ -15,9 +15,11 @@ plugins {
  * upgrade at all. The code is derived from the name so it rises with semver on its own; the
  * fallback is what a local `assembleRelease` builds.
  */
-/** The tag a build is measured from, e.g. `v0.16.0-32-gdb9ba53`, or null outside a checkout. */
+/** The nearest upstream release tag, excluding this fork's own release suffix. */
 val dshDescribe: String? = runCatching {
-    val process = ProcessBuilder("git", "describe", "--tags", "--always", "--dirty")
+    val process = ProcessBuilder(
+        "git", "describe", "--tags", "--match", "v[0-9]*", "--exclude", "v*-sqzwx.*", "--always", "--dirty",
+    )
         .directory(rootDir)
         .redirectErrorStream(true)
         .start()
@@ -32,7 +34,7 @@ val dshDescribe: String? = runCatching {
  */
 val dshUpstreamVersion: String = System.getenv("DSH_VERSION_NAME")?.takeIf { it.isNotBlank() }
     ?: dshDescribe?.removePrefix("v")?.takeIf { name -> name.firstOrNull()?.isDigit() == true }
-    ?: "0.20.0"
+    ?: "0.21.1"
 
 /** `0.16.0-32-gabc123` and `0.16.0` both name release 0.16.0. */
 val dshUpstreamBase: String = dshUpstreamVersion
@@ -183,6 +185,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.appcompat)
+    // Folds, hinges and postures for the adaptive shell (see ui/adaptive).
+    implementation(libs.androidx.window)
+    implementation(libs.androidx.window.core)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -226,6 +231,9 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.runner)
+    // `FoldingFeature(...)` and `WindowLayoutInfoPublisherRule`: drive a fold or a half-open hinge
+    // into the running activity's WindowInfoTracker without a foldable.
+    androidTestImplementation(libs.androidx.window.testing)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

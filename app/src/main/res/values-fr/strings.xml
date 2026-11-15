@@ -46,6 +46,8 @@
     <string name="chatlist_sort_updated">Trier par dernière mise à jour</string>
     <string name="chatlist_sort_manual">Ordre manuel</string>
     <string name="chat_composer_hint">Écrivez à l’agent…</string>
+    <string name="chat_composer_expand">Ouvrir l’éditeur en plein écran</string>
+    <string name="chat_composer_fullscreen_title">Message</string>
     <string name="chat_composer_queue">File d’attente</string>
     <string name="chat_composer_steer">Orienter</string>
     <string name="chat_composer_stop">Arrêter</string>
@@ -77,6 +79,9 @@
     <string name="chat_details_empty">Sélectionnez une ligne d’outil dans la conversation pour inspecter son entrée et sa sortie.</string>
     <string name="chat_input_placeholder">Entrée</string>
     <string name="chat_output_placeholder">Sortie</string>
+    <string name="tool_output_show_raw">Afficher le JSON brut</string>
+    <string name="tool_output_hide_raw">Masquer le JSON brut</string>
+    <string name="tool_output_copy_raw">Copier le JSON brut</string>
     <string name="goal_title">Objectif</string>
     <string name="goal_none">Aucun objectif actif</string>
     <string name="goal_phase_active">Actif</string>
@@ -211,6 +216,8 @@
     <string name="time_months">%1$d mois</string>
     <string name="time_years">%1$d an</string>
     <string name="chatlist_open">Ouvrir les discussions</string>
+    <string name="chatlist_hide">Masquer les discussions</string>
+    <string name="chatlist_show">Afficher les discussions</string>
     <string name="chatlist_workspace_rename">Renommer le projet</string>
     <string name="chatlist_workspace_delete">Retirer le projet</string>
     <string name="chatlist_workspace_delete_confirm">Retirer ce projet du harness ? Son dossier et ses journaux de session restent tels quels.</string>
@@ -421,6 +428,15 @@
     <string name="harness_automation_history_not_found">Cette tâche n’est plus disponible.</string>
     <string name="harness_automation_history_cursor_error">Les enregistrements ont changé. Réessayez.</string>
 
+    <!-- System lines: things the user did that are not chat messages, told in the transcript -->
+    <string name="system_line_permission_changed">Vous avez défini l\'autorisation sur %1$s</string>
+    <string name="system_line_permission_changed_plain">Vous avez modifié l\'autorisation</string>
+    <string name="system_line_permission_failed">Le changement d\'autorisation n\'a pas abouti</string>
+    <string name="system_line_compact">Vous avez compacté la conversation</string>
+    <string name="system_line_plan_on">Vous avez activé le mode plan</string>
+    <string name="system_line_plan_off">Vous avez désactivé le mode plan</string>
+    <string name="system_line_command">Vous avez lancé %1$s</string>
+    <string name="system_line_command_failed">%1$s n\'a pas abouti</string>
     <!-- dsh-rewind picker (port of the plugin's web popover) -->
     <string name="rewind_marker">Rembobiné jusqu\'ici</string>
     <string name="rewind_no_text">(sans texte)</string>
@@ -516,10 +532,9 @@
     <string name="hold_replace_draft_confirm">Remplacer</string>
 
     <!-- Provider usage -->
-    <string name="quota_title">Limites et solde</string>
+    <string name="quota_title">Utilisation</string>
     <string name="quota_short">5 h</string>
     <string name="quota_week">Semaine</string>
-    <string name="quota_unknown">Aucune donnée sur les limites</string>
     <string name="quota_refresh">Vérifier</string>
     <string name="quota_checked">Vérifié : %1$s</string>
     <string name="quota_all">Tous les fournisseurs</string>
@@ -670,4 +685,34 @@
     <string name="hold_workspace_actions">Actions du dossier</string>
     <string name="chatlist_show_all">Afficher tout %1$d</string>
     <string name="chatlist_show_less">Afficher moins</string>
+    <string name="quota_session_title">Cette session</string>
+    <string name="quota_tokens_input">Entrée</string>
+    <string name="quota_tokens_output">Sortie</string>
+    <string name="quota_tokens_cache">Succès du cache</string>
+    <string name="quota_tokens_total">Total</string>
+    <string name="quota_session_empty">Aucun jeton utilisé pour l’instant</string>
+    <string name="quota_balance_title">Solde DeepSeek</string>
+    <string name="quota_balance_bonus">Bonus : %1$s</string>
+    <string name="quota_balance_failed">Impossible de charger le solde</string>
+    <string name="quota_limit_reached">Limite d’utilisation atteinte</string>
+    <string name="quota_rate_limited">Trop de requêtes, réessayez dans un instant</string>
+    <string name="quota_limit_short">Limite atteinte</string>
+    <string name="quota_rate_short">Limite de requêtes</string>
+    <string name="permission_preset_read_only">Lecture seule</string>
+    <string name="permission_preset_workspace_write">Écriture dans l\'espace de travail</string>
+    <string name="permission_preset_full_access">Accès complet</string>
+    <string name="permission_preset_auto">Révision automatique</string>
+    <string name="permission_preset_auto_desc">S\'exécute sans bac à sable après une révision expérimentale par le même modèle de chaque appel d\'outil natif et appel interne PTC.</string>
+    <string name="shortcuts_group_message">Zone de message</string>
+    <string name="shortcuts_group_sessions">Sessions</string>
+    <string name="shortcuts_group_general">Général</string>
+    <string name="shortcuts_send">Envoyer le message</string>
+    <string name="shortcuts_newline">Nouvelle ligne</string>
+    <string name="shortcuts_focus_composer">Aller à la zone de message</string>
+    <string name="shortcuts_new_session">Nouvelle session</string>
+    <string name="shortcuts_search_sessions">Rechercher des sessions</string>
+    <string name="shortcuts_toggle_list">Afficher ou masquer les sessions</string>
+    <string name="shortcuts_settings">Ouvrir les paramètres</string>
+    <string name="shortcuts_close">Fermer la feuille ou la boîte de dialogue</string>
+    <string name="chat_drop_hint">Déposez des fichiers ici pour les joindre</string>
 </resources>

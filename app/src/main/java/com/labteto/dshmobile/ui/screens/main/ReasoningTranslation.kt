@@ -1,6 +1,6 @@
 package com.labteto.dshmobile.ui.screens.main
 
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,7 +67,7 @@ private fun ReasoningContentState(text: String, streaming: Boolean) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text(
                     if (busy) stringResource(R.string.common_loading) else if (showTranslation)
-                        stringResource(R.string.alpha2_original) else stringResource(R.string.alpha2_translate, metadata.preferences.provider),
+                        stringResource(R.string.alpha2_original) else stringResource(R.string.alpha2_translate, translationProviderLabel(metadata.preferences.provider)),
                     style = DsType.small13Strong,
                     color = if (busy) colors.labelTertiary else colors.accent,
                     maxLines = 1,

@@ -6,7 +6,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import com.labteto.dshmobile.ui.components.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalUriHandler
@@ -297,19 +296,12 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         pills + maths
     }
     if (!hasLinks) {
-        // Nothing to tap, so the text is laid out plainly: a ClickableText would swallow the tap
-        // that belongs to the row. The inline slots are still handed over — a formula is inline
-        // content whether or not the line has a link in it, and a text without them draws each
-        // slot's source instead.
+        // Long-press selects without a ClickableText swallowing the gesture. A tap elsewhere clears
+        // selection through the transcript's clearSelectionOnTap observer, without rebuilding this
+        // container. Formulas still need their inline slots even when the line has no links.
         RenderStats.addSelection()
-        // Long-press selects a span of the answer. Re-keyed on the shared dismiss token: a tap
-        // anywhere in the transcript increments it, and rebuilding the container is what clears
-        // the selection — this Compose version has no dismiss-on-outside-tap of its own.
-        val dismissToken = LocalSelectionDismiss.current.value
-        key(dismissToken) {
-            SelectionContainer(modifier = modifier) {
-                Text(result, style = style, inlineContent = inlineContent)
-            }
+        SelectionContainer(modifier = modifier) {
+            Text(result, style = style, inlineContent = inlineContent)
         }
         return
     }

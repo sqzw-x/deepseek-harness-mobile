@@ -3,6 +3,10 @@ package com.labteto.dshmobile.ui.screens.main
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performSemanticsAction
@@ -72,6 +76,19 @@ class ModelsSheetSwipeTest {
     }
 
     private fun list() = compose.onNode(hasScrollAction())
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun escapeClosesThePickerWithoutStartingADrag() {
+        open(models = 20)
+
+        compose.onNode(hasSetTextAction()).performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.waitForIdle()
+
+        assertTrue("Escape did not dismiss the model picker", dismissed)
+    }
 
     @Test
     fun swipingDownAtTheTopDoesNotCloseThePicker() {
