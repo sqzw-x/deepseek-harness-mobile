@@ -6,7 +6,7 @@ DSH Mobile speaks the DeepSeek Harness web-client protocol over `/api`. The prot
 
 | DSH Mobile | Harness | Notes |
 |---|---|---|
-| 0.21.1-sqzwx.13 (this fork) | 0.2.2-rc.1 | Merged upstream 0.21.1 and later compaction/goal fixes while retaining this fork's notification, transcript, model picker, release and identity behavior. On the Windows Android target, core/mock/shared UI/app unit tests, lint, debug APK and 100 targeted emulator tests pass, plus full-screen insets under gesture/three-button navigation; real-host conformance and iOS were not run for this merge |
+| 0.21.1-sqzwx.14 (this fork) | 0.2.2-rc.1 | Upstream 0.21.1 and later compaction/goal fixes, retaining this fork's transcript, model picker, notifications and identity. Integration passed unit tests, lint, debug builds and 100 targeted emulator tests, plus gesture/three-button insets. The child-completion notification fix adds 18 passing audience/race tests; ordinary forks and actionable child requests still notify. Real-host conformance and iOS were not rerun |
 | 0.19.1 | 0.2.2-rc.1 | Same protocol baseline and the same harness as 0.19.0, with no wire changes. The sessions drawer fix (#70) was also checked against 0.2.1-rc.2 |
 | 0.19.0 | 0.2.2-rc.1 | All 15 real-host conformance scenarios pass on 0.2.2-rc.1, which changed live state frames, schedule edits, subagent chat addresses and image reads. Saving or deleting an automation needs a 0.2.2 host, because `schedule/edit` replaces `schedule/update` and `schedule/delete`. The in-app protocol baseline label still names the 0.2.1-rc.2 fixture until that fixture is regenerated |
 | 0.18.0 | 0.2.1-rc.2 | Same protocol baseline as 0.17.0. Rewind to this message, from holding a sent message, needs dsh-rewind-plugin on the host |
