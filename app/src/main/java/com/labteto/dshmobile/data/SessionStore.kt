@@ -430,6 +430,16 @@ class SessionStore @Inject constructor(
     private val _sessions = MutableStateFlow<List<SessionRow>>(emptyList())
     val sessions: StateFlow<List<SessionRow>> = _sessions.asStateFlow()
 
+    // Notification audience needs header provenance: a root may omit origin, but a partial
+    // session-added row may omit it too. Only a successful list read verifies that negative fact.
+    private var notificationMetadataHost: String? = null
+    private val notificationMetadata = mutableMapOf<String, Pair<SessionRow, Boolean>>()
+
+    internal fun notificationSessionMetadata(sessionId: String): Pair<SessionRow?, Boolean> = synchronized(lock) {
+        if (notificationMetadataHost != activeHostKey) null to false
+        else notificationMetadata[sessionId]?.let { it.first to it.second } ?: (null to false)
+    }
+
     private val _workspaces = MutableStateFlow<List<WorkspaceRow>>(emptyList())
     val workspaces: StateFlow<List<WorkspaceRow>> = _workspaces.asStateFlow()
 
@@ -1397,6 +1407,16 @@ class SessionStore @Inject constructor(
     }
 
     // ------------------------------------------------------------------ session list state updates
+    private fun recordNotificationMetadataLocked(row: SessionRow, listed: Boolean = false, host: String? = activeHostKey) {
+        if (notificationMetadataHost != host) {
+            notificationMetadata.clear()
+            notificationMetadataHost = host
+        }
+        notificationMetadata[row.sessionId] = com.labteto.dshmobile.notify.mergeNotificationMetadata(
+            notificationMetadata[row.sessionId], row, listed,
+        )
+    }
+
     /**
      * One session became visible to list consumers.
      *
@@ -1445,6 +1465,7 @@ class SessionStore @Inject constructor(
                 formatStatus = item.formatStatus,
                 subagent = subagent,
             )
+            recordNotificationMetadataLocked(row)
             if (existing == null) {
                 // New sessions appear at the front (most recent first).
                 val copy = LinkedHashMap<String, SessionRow>(sessionRows.size + 1)
@@ -1463,6 +1484,7 @@ class SessionStore @Inject constructor(
         questionSessions.removeSession(sessionId)
         synchronized(lock) {
             sessionRows.remove(sessionId)
+            notificationMetadata.remove(sessionId)
             pendingKinds.remove(sessionId)
             runningBySession.remove(sessionId)
             engagedSessions.remove(sessionId)
@@ -1762,10 +1784,13 @@ class SessionStore @Inject constructor(
      */
     suspend fun refreshSessions(quiet: Boolean = false): SessionListRefresh {
         val api = apiOrNull() ?: return SessionListRefresh.Failed()
+        val host = activeHostKey
         return when (val r = api.sessionList(null)) {
             is RpcResult.Ok -> {
+                if (host != activeHostKey || api !== connectionManager.connectedApi) return SessionListRefresh.Failed()
                 clearConnectionError()
                 synchronized(lock) {
+                    if (host != activeHostKey || api !== connectionManager.connectedApi) return SessionListRefresh.Failed()
                     sessionRows.clear()
                     for (item in r.value.items) {
                         // A sequenced list row is the host's current title, so a rename made on
@@ -1795,6 +1820,8 @@ class SessionStore @Inject constructor(
                             ),
                         )
                     }
+                    sessionRows.values.forEach { recordNotificationMetadataLocked(it, listed = true, host = host) }
+                    notificationMetadata.keys.retainAll(sessionRows.keys)
                     // A session the host no longer lists has nothing left to remember.
                     engagedSessions.retainAll(sessionRows.keys)
                     emitSessionsLocked()

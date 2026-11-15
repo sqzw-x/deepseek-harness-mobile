@@ -56,6 +56,21 @@ class NotificationObserver @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val classifier = CompletionClassifier()
     private val seen = LinkedHashSet<String>()
+    /** A cancel/read and the final post must not overtake one another across collectors. */
+    private val deliveryLock = Any()
+    private val sessionGate = SessionNotificationGate(
+        connectionKey = {
+            connectionManager.generation?.clientId
+                ?.takeIf { connectionManager.state.value.phase == com.labteto.dshmobile.connection.ConnectionPhase.CONNECTED }
+                ?.let { "${store.activeHostKey}|$it" }
+        },
+        sessionKind = { sid ->
+            val (row, listed) = store.notificationSessionMetadata(sid)
+            notificationSessionKind(row, listed)
+        },
+        refreshSessions = { store.refreshSessions(quiet = true) },
+        unresolved = { sid -> trace.record(BackgroundTrace.Kind.SESSION, "notification identity unavailable: $sid") },
+    )
 
     /**
      * Pending-request id → the session it belongs to, for the waterfalls this observer was told
@@ -174,7 +189,7 @@ class NotificationObserver @Inject constructor(
                 store.pendingReveal,
             ) { onScreen, sessionId, reveal ->
                 sessionId.takeIf { onScreen && reveal == null }
-            }.filterNotNull().collect { notifications.cancelSession(it) }
+            }.filterNotNull().collect { handledElsewhere(it) }
         }
     }
 
@@ -217,7 +232,8 @@ class NotificationObserver @Inject constructor(
      * by whoever answered first. A notification whose question was answered elsewhere is exactly
      * as stale as one about a session being looked at, so both withdraw the session's lot.
      */
-    private fun handledElsewhere(sessionId: String) {
+    private fun handledElsewhere(sessionId: String) = synchronized(deliveryLock) {
+        sessionGate.dismiss(sessionId)
         notifications.cancelSession(sessionId)
     }
 
@@ -257,6 +273,16 @@ class NotificationObserver @Inject constructor(
     }
 
     private fun maybeNotify(event: CompletionEvent) {
+        val ticket = sessionGate.ticket()
+        scope.launch {
+            if (!sessionGate.allows(event, ticket)) return@launch
+            synchronized(deliveryLock) {
+                if (sessionGate.isCurrent(event.sessionId, ticket)) postNotification(event)
+            }
+        }
+    }
+
+    private fun postNotification(event: CompletionEvent) {
         if (!notifications.canPost()) return
         // Suppress only the completion the user can already see happening.
         if (appInForeground && store.isSessionOpen(event.sessionId)) return

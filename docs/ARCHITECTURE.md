@@ -100,14 +100,14 @@ tools/capture/  Node recorder of real harness traffic → conformance fixtures
    continued questions use `userQuestions/answer`. A
    picked file is streamed to `/api/session/uploadFileBinary` as soon as it is
    picked, and the message cites the receipt that came back.
-4. `NotificationObserver` classifies host events into completion events and
-   posts channel-notifications that deep-link into sessions. Turn and goal
-   completions reach it from `SessionStore`, which owns the only stream
-   they travel on. A session's notifications are withdrawn as soon as the
-   app is in front with that session open, and when another client shows
-   the user dealt with it — a human prompt there, or a pending request
-   settled elsewhere. A bare view is invisible: the host forwards no read
-   receipt.
+4. `NotificationObserver` classifies host status and `SessionStore` follow events.
+   `SessionNotificationGate` admits completions only for verified ordinary sessions,
+   forks included; child approvals/questions remain actionable. Unknown identities
+   get two bounded quiet list reads, then diagnostic-only suppression. Delayed decisions
+   are connection-bound and invalidated by reading or handling that session. Posted
+   notifications also withdraw when the app shows the session, another client sends
+   a human prompt, or a pending request settles elsewhere. The host forwards no
+   read receipt: a bare view on another client is invisible.
 
 ## Theme, appearance and touch
 
