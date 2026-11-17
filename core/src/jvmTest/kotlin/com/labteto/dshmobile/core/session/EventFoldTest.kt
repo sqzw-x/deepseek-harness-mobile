@@ -487,6 +487,80 @@ class EventFoldTest {
         assertEquals("visible reply", assistant.plainText)
     }
 
+    private fun ptcDispatch(
+        seq: Long,
+        subCallId: String,
+        name: String,
+        settled: Boolean,
+        parentCallId: String = "call_root",
+        isError: Boolean = false,
+    ) = event(if (settled) "tool/ptc-dispatch" else "tool/ptc-dispatch-start", seq, buildJsonObject {
+        put("rootCallId", "call_root")
+        put("parentCallId", parentCallId)
+        put("subCallId", subCallId)
+        put("name", name)
+        putJsonObject("arguments") { put("description", name); put("command", name) }
+        if (settled) {
+            put("isError", isError)
+            putJsonArray("content") { add(buildJsonObject { put("type", "text"); put("text", "$name ok") }) }
+        }
+    })
+
+    @Test
+    fun ptcDispatchStartAndSettlementFoldToOneSettledNode() {
+        val events = listOf(
+            event("tool/call", 0, buildJsonObject {
+                put("callId", "call_root"); put("name", "run_code"); put("arguments", "{}")
+            }),
+            ptcDispatch(1, "call_root:ptc:1", "bash", settled = false),
+            ptcDispatch(2, "call_root:ptc:1", "bash", settled = true),
+        )
+        val nodes = EventFold("s1").fold(events).nodes
+        val dispatch = nodes.single { it is PtcDispatchNode } as PtcDispatchNode
+        assertEquals("call_root:ptc:1", dispatch.subCallId)
+        assertEquals("call_root", dispatch.parentCallId)
+        assertEquals("bash", dispatch.name)
+        assertTrue(dispatch.settled)
+        // The start's position and time are kept, so the row sits where it happened and can still
+        // report how long it took.
+        assertEquals(1L, dispatch.seq)
+        assertEquals(1L, dispatch.time)
+        assertEquals(2L, dispatch.settledTime)
+        assertTrue(dispatch.argumentsJson.contains("\"command\""))
+        assertFalse(dispatch.isError)
+        assertTrue(dispatch.content.toString().contains("bash ok"))
+        // One node for the pair, not one per event.
+        assertEquals(1, nodes.count { it is PtcDispatchNode })
+    }
+
+    @Test
+    fun ptcSettlementWithoutItsStartStillFolds() {
+        // A paged window can begin after the start: the call is still in the log, so it is still a
+        // node, and it is settled rather than running.
+        val dispatch = EventFold("s1")
+            .fold(listOf(ptcDispatch(7, "call_root:ptc:3", "read", settled = true, isError = true)))
+            .nodes
+            .single { it is PtcDispatchNode } as PtcDispatchNode
+        assertTrue(dispatch.settled)
+        assertTrue(dispatch.isError)
+        assertEquals(7L, dispatch.seq)
+        assertEquals(7L, dispatch.time)
+    }
+
+    @Test
+    fun ptcDispatchKeepsTheNestedParentEdge() {
+        // A program that dispatches another run_code: the inner call's parent is the outer sub-call,
+        // not the top-level call, and the fold must not flatten that away.
+        val events = listOf(
+            ptcDispatch(1, "call_root:ptc:1", "run_code", settled = false),
+            ptcDispatch(2, "call_root:ptc:1:ptc:1", "bash", settled = false, parentCallId = "call_root:ptc:1"),
+        )
+        val dispatched = EventFold("s1").fold(events).nodes.filterIsInstance<PtcDispatchNode>()
+        assertEquals(listOf("call_root:ptc:1", "call_root:ptc:1:ptc:1"), dispatched.map { it.subCallId })
+        assertEquals("call_root:ptc:1", dispatched[1].parentCallId)
+        assertEquals("call_root", dispatched[1].rootCallId)
+    }
+
     @Test
     fun roundTripsThroughWireJson() {
         // The wire JSON parser (lenient) must accept the event envelope.

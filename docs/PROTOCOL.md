@@ -534,6 +534,22 @@ simplification of the web client's `ClientAssistantStream`, which stages the
 settlement until the `end` frame so the two swap atomically and reopens the
 stream on a fault.
 
+### PTC dispatch: the calls a `run_code` program made
+
+PTC mode logs the inner calls of a `run_code` program as a pair of durable events:
+
+```json
+{"type":"tool/ptc-dispatch-start","seq":19,"data":{"rootCallId":"call_…","parentCallId":"call_…","subCallId":"call_…:ptc:1","name":"bash","arguments":{"command":"ls"}}}
+{"type":"tool/ptc-dispatch","seq":23,"data":{"rootCallId":"call_…","parentCallId":"call_…","subCallId":"call_…:ptc:1","name":"bash","arguments":{…},"isError":false,"content":[…],"meta":{…}}}
+```
+
+`parentCallId` is the call that dispatched it, so a program that dispatches another
+`run_code` nests: the inner call's parent is that sub-call, not the top-level one.
+`arguments` is an object here, where `tool/call` carries it as a JSON string. The fold
+pairs start and settlement into one node per `subCallId` (the settlement replaces the
+start, keeping its position and start time), and the transcript draws the calls under
+the one that ran the program rather than as rows of their own.
+
 ## Session projections
 
 Several facts the UI needs never arrive as an RPC result — they are pushed as

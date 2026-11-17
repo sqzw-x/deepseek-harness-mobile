@@ -163,8 +163,9 @@ private fun diffStats(diffs: List<DiffHunk>): Triple<Int, Int, Int> {
 
 // ---- Bodies -----------------------------------------------------------------
 
+/** A card's body, exposed so a PTC sub-call can draw the same body without a second header. */
 @Composable
-private fun ToolCardBody(view: ToolCardView) {
+internal fun ToolCardBody(view: ToolCardView) {
     val colors = DsTheme.colors
     Column(
         modifier = Modifier

@@ -6,6 +6,7 @@ import com.labteto.dshmobile.core.session.CommandNode
 import com.labteto.dshmobile.core.session.CompactionNode
 import com.labteto.dshmobile.core.session.EventFold
 import com.labteto.dshmobile.core.session.OtherNode
+import com.labteto.dshmobile.core.session.PtcDispatchNode
 import com.labteto.dshmobile.core.session.SessionEventEnvelope
 import com.labteto.dshmobile.core.session.ToolCallNode
 import com.labteto.dshmobile.core.session.ToolResultNode
@@ -85,6 +86,13 @@ class ChatNodeVisibilityTest {
                 .rendersContent(),
         )
         assertFalse(TurnEndNode(seq = 3, turn = 1, reasonKind = "completed").rendersContent())
+        // A dispatched call is drawn under its parent, never as a row of its own.
+        assertFalse(
+            PtcDispatchNode(
+                seq = 4, rootCallId = "c", parentCallId = "c", subCallId = "c:1",
+                name = "bash", argumentsJson = "{}", time = 4,
+            ).rendersContent(),
+        )
     }
 
     @Test

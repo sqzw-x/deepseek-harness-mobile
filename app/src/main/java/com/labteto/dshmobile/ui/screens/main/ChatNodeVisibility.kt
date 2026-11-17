@@ -9,6 +9,7 @@ import com.labteto.dshmobile.core.session.DeveloperMessageNode
 import com.labteto.dshmobile.core.session.GoalNode
 import com.labteto.dshmobile.core.session.OtherNode
 import com.labteto.dshmobile.core.session.PlanModeNode
+import com.labteto.dshmobile.core.session.PtcDispatchNode
 import com.labteto.dshmobile.core.session.RetryNode
 import com.labteto.dshmobile.core.session.REWIND_SOURCE_KIND
 import com.labteto.dshmobile.core.session.RewindCuts
@@ -85,6 +86,9 @@ internal fun ChatNode.rendersContent(
     is TurnStartNode -> false
     // Rendered inside the matching call's card.
     is ToolResultNode -> false
+    // Rendered under the call that dispatched it (PtcSubCalls); a top-level row would be the same
+    // dispatch twice, and as a row it would also cut the run of work it belongs to.
+    is PtcDispatchNode -> false
     // Only an unclean ending says anything; a completed turn is the frame. Kinds [ChatNodeItem]
     // draws nothing for (harness 0.1.7's `forked`, or one this build has never seen) cost a gap.
     is TurnEndNode -> reasonKind in DRAWN_TURN_END_KINDS

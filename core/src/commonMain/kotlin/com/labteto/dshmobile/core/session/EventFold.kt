@@ -273,6 +273,11 @@ private class FoldState(private val sessionId: String) {
                 nodes.add(ToolResultNode(event.seq, result.callId, result.content, result.isError, turn, step, data.jsonObject["meta"]))
             }
 
+            // PTC mode: the inner calls a `run_code` program dispatched. One node per sub-call, the
+            // settlement replacing its start, so the transcript can nest them under their parent.
+            "tool/ptc-dispatch-start" -> foldPtcDispatch(data, event, settled = false)
+            "tool/ptc-dispatch" -> foldPtcDispatch(data, event, settled = true)
+
             // Harness 0.1.7: the agent's tool set changed mid-session. Model-visible context, not
             // something anyone said, so it folds to a disclosure row rather than a bubble.
             "developer/message" -> {
@@ -321,6 +326,63 @@ private class FoldState(private val sessionId: String) {
 
             else -> nodes.add(OtherNode(event.seq, event.type, data, ignorable = event.ignorable == true))
         }
+    }
+
+    /**
+     * One sub-call a `run_code` program dispatched, at either stage of its life.
+     *
+     * The two events describe the same call — the start when the program dispatches it, the
+     * settlement with its content — so they fold to one node and the settlement replaces the start
+     * in place. A settlement whose start is not in the loaded window still becomes a node: a paged
+     * history can begin mid-dispatch, and dropping the call because its start fell on the previous
+     * page would hide work that is in the log.
+     *
+     * The node keeps its start's `seq` so it stays where it happened; [PtcDispatchNode.time] and
+     * [PtcDispatchNode.settledTime] carry the two event times for the elapsed display.
+     */
+    private fun foldPtcDispatch(data: JsonElement, event: SessionEventEnvelope, settled: Boolean) {
+        val payload = data as? JsonObject ?: return
+        val subCallId = payload["subCallId"]?.jsonPrimitive?.contentOrNull ?: return
+        val rootCallId = payload["rootCallId"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        // A settlement is keyed on its parent, and so is the tree; a host that omits the parent
+        // leaves the call at the root rather than making it unreachable.
+        val parentCallId = payload["parentCallId"]?.jsonPrimitive?.contentOrNull
+            ?: rootCallId
+        val name = payload["name"]?.jsonPrimitive?.contentOrNull ?: "tool"
+        val existing = nodes.indexOfLast { it is PtcDispatchNode && it.subCallId == subCallId }
+        val previous = (nodes.getOrNull(existing) as? PtcDispatchNode)
+        val node = PtcDispatchNode(
+            seq = previous?.seq ?: event.seq,
+            rootCallId = rootCallId.ifEmpty { previous?.rootCallId.orEmpty() },
+            parentCallId = parentCallId.ifEmpty { previous?.parentCallId.orEmpty() },
+            subCallId = subCallId,
+            name = name,
+            argumentsJson = payload.argumentText(),
+            time = previous?.time ?: event.time,
+            content = if (settled) payload["content"] ?: previous?.content else previous?.content,
+            isError = if (settled) {
+                payload["isError"]?.jsonPrimitive?.booleanOrNull ?: previous?.isError ?: false
+            } else {
+                previous?.isError ?: false
+            },
+            settled = settled || previous?.settled == true,
+            settledTime = if (settled) event.time else previous?.settledTime,
+            meta = if (settled) payload["meta"] ?: previous?.meta else previous?.meta,
+        )
+        if (existing >= 0) nodes[existing] = node else nodes.add(node)
+    }
+
+    /**
+     * A sub-call's arguments as the transcript's row model reads them: a JSON text.
+     *
+     * The harness logs them as an object rather than the string a `tool/call` carries, so they are
+     * re-serialized; a primitive is taken at its word, which is what the partial-arguments path
+     * already assumes.
+     */
+    private fun JsonElement?.argumentText(): String = when (this) {
+        null -> "{}"
+        is JsonPrimitive -> if (isString) content else toString()
+        else -> toString()
     }
 
     private fun key(turn: Int, step: Int) = "$turn.$step"

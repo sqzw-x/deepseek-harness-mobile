@@ -57,6 +57,10 @@ object EventClassification {
         "subagent/descriptor",
         // Harness 0.1.7: the agent's tool set changed. Folded to a context disclosure row.
         "developer/message",
+        // PTC mode: the inner calls a `run_code` program dispatched, folded to one node per
+        // sub-call and nested under the call that ran the program.
+        "tool/ptc-dispatch",
+        "tool/ptc-dispatch-start",
     )
 
     /**
@@ -86,10 +90,6 @@ object EventClassification {
         "session-log-deepseek/delivery-accepted",
         "subagent/catalog",
         "subagent/model-selection-policy",
-        // Renamed upstream from `tool/code-dispatch*` before this client's pinned baseline; the
-        // old spelling survives only inside the harness's v0-to-v1 migration.
-        "tool/ptc-dispatch",
-        "tool/ptc-dispatch-start",
         "web/deepseek-search-llm-request",
         "session/title-llm-request",
         // Current directory is surfaced by the workingDirectory projection in session details.

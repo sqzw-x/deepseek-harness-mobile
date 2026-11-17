@@ -55,6 +55,7 @@ import com.labteto.dshmobile.core.session.DeveloperMessageNode
 import com.labteto.dshmobile.core.session.GoalNode
 import com.labteto.dshmobile.core.session.OtherNode
 import com.labteto.dshmobile.core.session.PlanModeNode
+import com.labteto.dshmobile.core.session.PtcDispatchNode
 import com.labteto.dshmobile.core.session.RetryNode
 import com.labteto.dshmobile.core.session.SubagentNode
 import com.labteto.dshmobile.core.session.TitleNode
@@ -81,6 +82,7 @@ import com.labteto.dshmobile.ui.components.StateDot
 import com.labteto.dshmobile.ui.components.StateDotState
 import com.labteto.dshmobile.ui.components.ThinkingPanel
 import com.labteto.dshmobile.ui.components.ToolCard
+import com.labteto.dshmobile.ui.components.ToolCardView
 import com.labteto.dshmobile.ui.components.UserBubble
 import com.labteto.dshmobile.ui.theme.DsAnimations
 import com.labteto.dshmobile.ui.theme.DsShapes
@@ -172,6 +174,10 @@ internal fun ChatNodeItem(node: ChatNode, context: ChatNodeContext) {
 
         // Rendered inside the matching ToolCallNode's card; not a standalone row.
         is ToolResultNode -> Unit
+
+        // Drawn under the call that dispatched it by [PtcSubCalls]; a row of its own would be the
+        // same call said twice.
+        is PtcDispatchNode -> Unit
 
         is TurnEndNode -> when (node.reasonKind) {
             "completed" -> Unit
@@ -544,40 +550,84 @@ private fun ActionIcon(
 // Tool calls
 // ---------------------------------------------------------------------------
 
+/** What a tool row's hold menu acts on. A sub-call owns no actions, so it passes null. */
+private class ToolCallActions(val node: ToolCallNode, val result: ToolResultNode?)
+
 @Composable
 internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: Boolean = false) {
-    val colors = DsTheme.colors
     val result = context.nodes
         .filterIsInstance<ToolResultNode>()
         .firstOrNull { it.callId == node.callId }
-
-    val card = buildToolCardView(
-        call = node,
-        result = result,
+    ToolCallDisclosure(
+        callId = node.callId,
+        name = node.name,
+        arguments = node.arguments,
+        content = result?.content,
+        isError = result?.isError == true,
         running = result == null && context.running,
-        cwd = context.cwd,
-        home = context.home,
+        meta = result?.meta,
+        startedAt = context.eventTimes[node.seq],
+        endedAt = result?.let { context.eventTimes[it.seq] },
+        context = context,
+        compact = compact,
+        actions = ToolCallActions(node, result),
     )
+}
+
+/**
+ * One tool call as the transcript draws it: a verb and its subject, the outcome, and the body one
+ * tap down.
+ *
+ * Separate from [ToolCallRow] because a PTC sub-call is the same row from different provenance: it
+ * has no [ToolCallNode] in the fold of its own and no actions to offer, but it is a tool call the
+ * reader should be able to read exactly like one. Its own body is the card's, and anything it
+ * dispatched is drawn under it by [PtcSubCalls].
+ */
+@Composable
+private fun ToolCallDisclosure(
+    callId: String,
+    name: String,
+    arguments: String,
+    content: JsonElement?,
+    isError: Boolean,
+    running: Boolean,
+    meta: JsonElement?,
+    startedAt: Long?,
+    endedAt: Long?,
+    context: ChatNodeContext,
+    compact: Boolean,
+    actions: ToolCallActions?,
+) {
+    val colors = DsTheme.colors
+    val card = remember(callId, name, arguments, content, isError, running, meta, context.cwd, context.home) {
+        buildToolCardView(
+            call = ToolCallNode(seq = 0, callId = callId, name = name, arguments = arguments, turn = 0, step = 0),
+            result = content?.let {
+                ToolResultNode(seq = 0, callId = callId, content = it, isError = isError, turn = 0, step = 0, meta = meta)
+            },
+            running = running,
+            cwd = context.cwd,
+            home = context.home,
+        )
+    }
     // The row header is derived here rather than taken from the card: only this layer knows the
     // tool's name and the session's cwd, which is what turns an absolute path into `app\build.gradle.kts`.
     val row = toolRowModel(
-        toolName = node.name,
-        argumentsJson = node.arguments,
+        toolName = name,
+        argumentsJson = arguments,
         cwd = context.cwd,
         // Derived from the call itself now: 0.1.2 sends no presenter title to prefer over it.
         viewTitle = null,
     )
-    var expanded by remember(node.callId) { mutableStateOf(false) }
-    var holdOpen by remember(node.callId) { mutableStateOf(false) }
+    var expanded by remember(callId) { mutableStateOf(false) }
+    var holdOpen by remember(callId) { mutableStateOf(false) }
     val holdLabel = stringResource(R.string.hold_tool_actions)
     // The leading slot carries the outcome: a red dot for a failed call, the tool glyph otherwise.
     val state = when {
-        result?.isError == true -> DisclosureState.Error
-        result == null && context.running -> DisclosureState.Running
+        isError -> DisclosureState.Error
+        running -> DisclosureState.Running
         else -> DisclosureState.Idle
     }
-    val startedAt = context.eventTimes[node.seq]
-    val endedAt = result?.let { context.eventTimes[it.seq] }
     val elapsed = if (startedAt != null && endedAt != null) {
         com.labteto.dshmobile.ui.components.formatDurationMs((endedAt - startedAt).coerceAtLeast(0))
     } else null
@@ -590,14 +640,21 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
         summaryOverride = row.summary,
         iconOverride = row.variant.featherIcon(),
         state = state,
-        onHold = { holdOpen = true },
+        onHold = if (actions != null) ({ holdOpen = true }) else null,
         holdLabel = holdLabel,
         header = if (compact) ({
+            val toggle = { expanded = !expanded }
             Row(Modifier.fillMaxWidth().heightIn(min = 32.dp)
-                .clickableWithHold(holdLabel, onHold = { holdOpen = true }, role = Role.Button) { expanded = !expanded }
+                .then(
+                    if (actions != null) {
+                        Modifier.clickableWithHold(holdLabel, onHold = { holdOpen = true }, role = Role.Button, onClick = toggle)
+                    } else {
+                        Modifier.clickable(role = Role.Button, onClick = toggle)
+                    },
+                )
                 .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Icon(if (node.name == "read_image") FeatherIcons.Image else row.variant.featherIcon(), null, Modifier.size(14.dp), tint = colors.labelTertiary)
+                Icon(if (name == "read_image") FeatherIcons.Image else row.variant.featherIcon(), null, Modifier.size(14.dp), tint = colors.labelTertiary)
                 Text(row.title, style = DsType.small13, color = colors.labelSecondary)
                 Text(row.summary.orEmpty(), Modifier.weight(1f), style = DsType.caption11,
                     color = colors.labelCaption, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -609,39 +666,22 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
             }
         }) else null,
     )
-    if (holdOpen) ToolHoldMenu(node, result, row.filePath, context) { holdOpen = false }
+    if (holdOpen && actions != null) ToolHoldMenu(actions.node, actions.result, row.filePath, context) { holdOpen = false }
     AnimatedVisibility(
         visible = expanded,
         enter = fadeIn(DsAnimations.fade) + expandVertically(DsAnimations.expand),
         exit = fadeOut(DsAnimations.fade) + shrinkVertically(DsAnimations.expand),
     ) { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        // What the call returned, not the file as it is now: the durable attachment survives the
-        // file changing or being deleted, and shares the transcript's decoded-image cache.
-        val images = remember(result?.content) { toolResultImages(result?.content) }
-        images.forEach { ref ->
-            AttachmentImage(ref = ref, contentDescription = ref.name)
-        }
-        // The text the tool returned, not the protocol JSON around it. A generic card has no output
-        // of its own, so the text sits right under the input; the specialised cards (a terminal, a
-        // diff, a read) already present the result in their body, so there it stays one row down.
-        result?.content?.let { content ->
-            if (card is com.labteto.dshmobile.ui.components.ToolCardView.GenericCard) {
-                ToolResultOutput(content, label = stringResource(R.string.chat_output_placeholder))
-            } else {
-                ToolResultOutputRow(stringResource(R.string.chat_output_placeholder), content)
-            }
-        }
-        result?.meta?.let { JsonDisclosure(node.name, it) }
-        PtcChildren(node.callId, context.nodes.filterIsInstance<OtherNode>())
+        ToolCallBody(card, content, meta, name)
     } }
-    if (result?.isError == true) {
+    if (isError) {
         // The dot is colour-only, so the word stays — but without a second dot beside it.
         //
         // The call's own failure text, not a generic apology: "Something went wrong" told the
         // reader nothing they could act on, while the result body carries the command's stderr,
         // the refused path, or the tool's own message. The generic string is only the fallback
         // for a result that genuinely carries no prose.
-        val failure = remember(result?.content) { toolFailureMessage(result?.content) }
+        val failure = remember(content) { toolFailureMessage(content) }
         Text(
             failure ?: stringResource(R.string.common_error),
             style = DsType.caption11,
@@ -649,6 +689,34 @@ internal fun ToolCallRow(node: ToolCallNode, context: ChatNodeContext, compact: 
             modifier = Modifier.padding(start = 26.dp),
         )
     }
+    // What the program dispatched, under the call that ran it: PTC mode is one tool call from the
+    // transcript's point of view, and these are the calls it made.
+    PtcSubCalls(callId, context)
+}
+
+/**
+ * What a call returned: images, then the text body, then the durable meta the tool attached.
+ *
+ * Shared by a top-level call and a PTC sub-call so the two cannot drift. The text sits right under
+ * a generic card's input; a specialised card (a terminal, a diff, a read) already presents the
+ * result in its body, so there it goes one row down instead of saying it twice.
+ */
+@Composable
+internal fun ToolCallBody(card: ToolCardView, content: JsonElement?, meta: JsonElement?, name: String) {
+    // What the call returned, not the file as it is now: the durable attachment survives the
+    // file changing or being deleted, and shares the transcript's decoded-image cache.
+    val images = remember(content) { toolResultImages(content) }
+    images.forEach { ref ->
+        AttachmentImage(ref = ref, contentDescription = ref.name)
+    }
+    content?.let { body ->
+        if (card is ToolCardView.GenericCard) {
+            ToolResultOutput(body, label = stringResource(R.string.chat_output_placeholder))
+        } else {
+            ToolResultOutputRow(stringResource(R.string.chat_output_placeholder), body)
+        }
+    }
+    meta?.let { JsonDisclosure(name, it) }
 }
 
 // ---------------------------------------------------------------------------

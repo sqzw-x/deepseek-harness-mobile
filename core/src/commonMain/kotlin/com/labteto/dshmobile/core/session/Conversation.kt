@@ -119,6 +119,33 @@ data class ToolResultNode(
 ) : ChatNode
 
 /**
+ * One tool call a `run_code` program dispatched, in PTC mode.
+ *
+ * The harness logs two events for the same call: `tool/ptc-dispatch-start` when the program
+ * dispatches it, and `tool/ptc-dispatch` when it settles, carrying [content]. They fold to one node
+ * — the settlement replaces the start in place — so a sub-call is one row at either stage.
+ *
+ * [parentCallId] is a call id rather than a node because a program can dispatch another
+ * `run_code`: the edge may point at a top-level call or at another sub-call, and the tree the
+ * transcript draws is walked from these ids.
+ */
+data class PtcDispatchNode(
+    override val seq: Long,
+    val rootCallId: String,
+    val parentCallId: String,
+    val subCallId: String,
+    val name: String,
+    val argumentsJson: String,
+    /** When the call was first seen, in event time, so a settled row can show how long it took. */
+    val time: Long,
+    val content: JsonElement? = null,
+    val isError: Boolean = false,
+    val settled: Boolean = false,
+    val settledTime: Long? = null,
+    val meta: JsonElement? = null,
+) : ChatNode
+
+/**
  * A `developer/message` (harness 0.1.7): tools made available to, or withdrawn from, the agent
  * partway through a session. Model-visible context rather than conversation.
  */
