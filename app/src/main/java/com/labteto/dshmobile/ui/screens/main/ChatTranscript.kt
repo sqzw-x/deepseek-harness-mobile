@@ -62,6 +62,7 @@ import com.labteto.dshmobile.ui.components.DsButton
 import com.labteto.dshmobile.ui.components.DsButtonSize
 import com.labteto.dshmobile.ui.components.DsButtonVariant
 import com.labteto.dshmobile.ui.components.EmptyHero
+import com.labteto.dshmobile.ui.components.StableSelectionAutoScroll
 import com.labteto.dshmobile.ui.components.clearSelectionOnTap
 import com.labteto.dshmobile.ui.components.skeleton
 import com.labteto.dshmobile.ui.theme.DsTheme
@@ -416,6 +417,11 @@ internal fun ChatTranscript(
         listState.animateScrollToItem(0)
     }
     // A tap anywhere on the transcript ends a text selection made in it (issue #90); see the modifier.
+    //
+    // The selection handles drag inside a list that both asks to keep the dragged point visible and
+    // re-answers that request on every frame, so the scrolling feeds itself. See
+    // [StableSelectionAutoScroll] for why the answer is capped here instead.
+    StableSelectionAutoScroll {
     Box(modifier.fillMaxSize().clearSelectionOnTap()) {
     LazyColumn(
         state = listState,
@@ -535,6 +541,7 @@ internal fun ChatTranscript(
                 }
             },
         )
+    }
     }
     }
 }

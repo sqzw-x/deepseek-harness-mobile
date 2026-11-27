@@ -762,11 +762,23 @@ private fun FullScreenComposer(
     }
     // A field scrolls to its caret when the *selection* changes, not when it is measured, and this
     // one is measured twice — once with the page, once more when the keyboard takes its height. The
-    // page therefore used to open with a long draft showing its middle. Every time the viewport
-    // settles, the caret steps one character and back: the field scrolls to where the person was
-    // typing, and nothing else moves.
-    androidx.compose.runtime.LaunchedEffect(viewportPx) {
-        if (viewportPx <= 0 || value.text.isEmpty()) return@LaunchedEffect
+    // page therefore used to open with a long draft showing its middle. On the measure the page
+    // opens with, the caret steps one character and back: the field scrolls to where the person
+    // was typing, and nothing else moves.
+    //
+    // On that measure alone. The second one is the keyboard arriving, and a field brings its own
+    // caret into view as it is measured again; a nudge landing in that same frame moved the scroll
+    // away from the anchor the field had just chosen, and a long draft came up on its last line —
+    // which is what a caret that "jumps to the end of the text" when the keyboard arrives is. Every
+    // measure the page did not open with therefore leaves the selection alone: the keyboard's own
+    // scroll is the whole of what the page needs there.
+    //
+    // The wait for that first measure sits in an effect keyed on nothing for a reason: keyed on the
+    // height instead, the keyboard would restart it between its two writes and leave the caret one
+    // character back in the draft the person goes on typing into.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { viewportPx }.first { it > 0 }
+        if (value.text.isEmpty()) return@LaunchedEffect
         val caret = value.selection.end.coerceIn(0, value.text.length)
         onValueChange(value.copy(selection = androidx.compose.ui.text.TextRange(if (caret > 0) caret - 1 else 1)))
         androidx.compose.runtime.withFrameNanos { }
