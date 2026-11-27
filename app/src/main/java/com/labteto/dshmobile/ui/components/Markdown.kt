@@ -55,7 +55,10 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.runtime.getValue
@@ -108,6 +111,34 @@ fun isFolderReference(path: String): Boolean {
  * Block-level Markdown renderer: fenced code blocks, #-#### headings, bullet and
  * ordered lists, blockquotes, and paragraphs with inline **bold**, *italic*,
  * `code` chips and [links](https://example.com). Tables render as plain text.
+ *
+ * ## One selection for the whole block of Markdown
+ *
+ * The container wraps the whole column, not each block. A container is a selection *domain*: a
+ * selection can only reach inside the container it was started in, so one container per paragraph
+ * per list item (the shape this renderer had) made every bullet an island — a long press in the
+ * first item could not extend into the third, and two paragraphs were two selections. Every
+ * selectable below (a list item, a paragraph, a heading, a table cell, a quote's content) is a
+ * plain `Text` under this one registrar now, which is what lets a drag or Select all span them.
+ *
+ * Three things are deliberately unchanged by that move:
+ *
+ * - Taps still work. Selection in Compose is a *long* press; the short press that opens a link or
+ *   presses a workspace pill is untouched — the pill keeps its own `clickable`, and a line's tap
+ *   goes through [detectTapWithoutStealingPress], which claims the press only once it has decided
+ *   the gesture was a tap. Holding either of them starts a selection through this container.
+ * - A tap clears a live selection (issue #90). `SelectionManager` installs
+ *   `onClearSelectionRequested` on this container's own modifier while it holds focus, so a tap
+ *   anywhere in the container releases the selection — a tap on another paragraph of the *same*
+ *   message included, which is the case the old per-paragraph containers had to be helped with.
+ *   `clearSelectionOnTap` in [com.labteto.dshmobile.ui.components.SelectionDismiss] stays, and still
+ *   owns the two cases a container cannot see: a tap on another message's row, and a tap on a
+ *   footer, a card header or the gap between rows.
+ * - The streaming caret stays out of the container's text. It is decoration after the blocks, never
+ *   part of a selectable, so Select all cannot pick it up.
+ *
+ * A caller with no use for selection (a rich label inside a button, say) can opt out with
+ * `DisableSelection` around this composable; none does today.
  */
 @Composable
 fun MarkdownText(text: String, modifier: Modifier = Modifier, streamingCaret: Boolean = false) {
@@ -120,12 +151,15 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier, streamingCaret: Bo
         RenderStats.countChars(text.length)
         RenderStats.markdown { groupListBlocks(parseMarkdown(inlineHtmlToMarkdown(text))) }
     }
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        blocks.forEach { RenderBlockView(it) }
-        // The design's live-write signal: a small accent block that blinks while a reply is being
-        // written and stops the moment it settles. Kept out of the text itself so it never leaks
-        // into copy/selection.
-        if (streamingCaret) StreamingCaret()
+    RenderStats.addSelection()
+    SelectionContainer(modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            blocks.forEach { RenderBlockView(it) }
+            // The design's live-write signal: a small accent block that blinks while a reply is being
+            // written and stops the moment it settles. Kept out of the text itself so it never leaks
+            // into copy/selection.
+            if (streamingCaret) StreamingCaret()
+        }
     }
 }
 
@@ -296,26 +330,30 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         pills + maths
     }
     if (!hasLinks) {
-        // Long-press selects without a ClickableText swallowing the gesture. A tap elsewhere clears
-        // selection through the transcript's clearSelectionOnTap observer, without rebuilding this
-        // container. Formulas still need their inline slots even when the line has no links.
-        RenderStats.addSelection()
-        SelectionContainer(modifier = modifier) {
-            Text(result, style = style, inlineContent = inlineContent)
-        }
+        // No container of its own: [MarkdownText] wraps the whole reply, and a second container
+        // here would both cut this line out of that selection and cost a registrar per block.
+        // Long-press selection, the handles and the Copy / Select all toolbar all come from the one
+        // above. Formulas still need their inline slots even when the line has no links.
+        Text(result, modifier = modifier, style = style, inlineContent = inlineContent)
         return
     }
     // `Text` with its own hit test rather than `ClickableText`: the pills are inline content, which
     // ClickableText cannot host. Taps resolve to a character offset through the layout result,
     // exactly as ClickableText does internally. A pill is clickable itself: the offset under its
     // right half is the one after it, so an offset lookup would leave half of every pill dead.
+    //
+    // This branch used to have no container at all, so a line with a link could not be selected.
+    // It sits inside [MarkdownText]'s container now like every other line, which is only possible
+    // because the tap goes through [detectTapWithoutStealingPress] instead of [detectTapGestures]:
+    // a short tap still opens the link, and a hold still starts a selection — including directly
+    // over the link, which then selects its text instead of opening it.
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     Text(
         result,
         modifier = modifier.pointerInput(result) {
-            detectTapGestures { position ->
-                val offset = layout?.getOffsetForPosition(position) ?: return@detectTapGestures
-                if (result.getStringAnnotations("path", offset, offset).isNotEmpty()) return@detectTapGestures
+            detectTapWithoutStealingPress { position ->
+                val offset = layout?.getOffsetForPosition(position) ?: return@detectTapWithoutStealingPress
+                if (result.getStringAnnotations("path", offset, offset).isNotEmpty()) return@detectTapWithoutStealingPress
                 result.getStringAnnotations("url", offset, offset).firstOrNull()?.item?.let { raw ->
                     // http(s) goes to the browser, anything else is treated as a path into the
                     // session's own files. The scheme check lives in core so a reply cannot smuggle
@@ -330,6 +368,45 @@ private fun InlineMarkdown(text: String, style: TextStyle, modifier: Modifier = 
         inlineContent = inlineContent,
         onTextLayout = { layout = it },
     )
+}
+
+/**
+ * A tap detector that does not take the press away from the selection container above it.
+ *
+ * [detectTapGestures] consumes the down as soon as it arrives, and the selection gesture reads a
+ * consumed down as "somebody else owns this press": `awaitLongPressOrCancellation` gives up on the
+ * Final pass, so a container wrapped around this line could never start a selection on it. This
+ * waits exactly as long as a tap does — up, inside touch slop, before a long press turns the
+ * gesture into a selection — but touches nothing until it has decided that the gesture was a tap.
+ * The up it consumes then is what keeps a message's own clickable from folding its action row open
+ * on a link press, which is what the consuming detector used to do for this branch by accident.
+ */
+private suspend fun PointerInputScope.detectTapWithoutStealingPress(onTap: (Offset) -> Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val slop = viewConfiguration.touchSlop
+        val longPressMs = viewConfiguration.longPressTimeoutMillis
+        var tapUp: Offset? = null
+        while (true) {
+            val event = awaitPointerEvent()
+            // A second finger makes it a pinch or a two-finger scroll, never a tap.
+            if (event.changes.size > 1) break
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            val heldMs = change.uptimeMillis - down.uptimeMillis
+            val moved = (change.position - down.position).getDistance()
+            if (change.changedToUpIgnoreConsumed()) {
+                if (heldMs < longPressMs && moved <= slop) {
+                    change.consume()
+                    tapUp = change.position
+                }
+                break
+            }
+            // A hold belongs to the selection, and there is nothing left of a tap once the finger
+            // has travelled: stop watching instead of deciding later on a stale position.
+            if (heldMs >= longPressMs || moved > slop) break
+        }
+        tapUp?.let(onTap)
+    }
 }
 
 private fun buildInlineContent(

@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -56,6 +57,8 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.text.TextRange
+import com.labteto.dshmobile.ui.input.CaretRestore
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -752,6 +755,12 @@ private fun FullScreenComposer(
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     var viewportPx by remember { mutableStateOf(0) }
+    // Set once the page has opened and the field has been measured with the draft in it. The
+    // keyboard that comes up with the page is not an arrival to fix: the field is opening into it
+    // and the open effect below has already put the caret where the person left it. Worse, a nudge
+    // in that same frame takes the scroll away from the anchor the field has just chosen, which is
+    // how a long draft comes up on its last line.
+    var pageOpened by remember { mutableStateOf(false) }
     // Opened to be typed in, so the keyboard comes up with the page rather than a tap later.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         // The frame wait is the app's own habit around a field that appears with its window (see
@@ -769,20 +778,68 @@ private fun FullScreenComposer(
     // On that measure alone. The second one is the keyboard arriving, and a field brings its own
     // caret into view as it is measured again; a nudge landing in that same frame moved the scroll
     // away from the anchor the field had just chosen, and a long draft came up on its last line —
-    // which is what a caret that "jumps to the end of the text" when the keyboard arrives is. Every
-    // measure the page did not open with therefore leaves the selection alone: the keyboard's own
-    // scroll is the whole of what the page needs there.
+    // which is what a caret that "jumps to the end of the text" when the keyboard arrives is. That
+    // arrival is handled further down instead, once the keyboard has stopped moving, so that this
+    // effect and that one never write a selection in the same frame.
     //
     // The wait for that first measure sits in an effect keyed on nothing for a reason: keyed on the
     // height instead, the keyboard would restart it between its two writes and leave the caret one
     // character back in the draft the person goes on typing into.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         androidx.compose.runtime.snapshotFlow { viewportPx }.first { it > 0 }
-        if (value.text.isEmpty()) return@LaunchedEffect
-        val caret = value.selection.end.coerceIn(0, value.text.length)
-        onValueChange(value.copy(selection = androidx.compose.ui.text.TextRange(if (caret > 0) caret - 1 else 1)))
+        if (value.text.isNotEmpty()) {
+            val caret = value.selection.end.coerceIn(0, value.text.length)
+            onValueChange(value.copy(selection = androidx.compose.ui.text.TextRange(if (caret > 0) caret - 1 else 1)))
+            androidx.compose.runtime.withFrameNanos { }
+            onValueChange(value.copy(selection = androidx.compose.ui.text.TextRange(caret)))
+        }
+        pageOpened = true
+    }
+    // What this page needs that the field does not do for itself: after the keyboard arrives, the
+    // text has to come up to the caret. The field is not resized by the window — this page insets
+    // its content by the keyboard instead (DsWindow) — so all the field sees is a shorter box.
+    // Foundation scrolls to the caret only when the caret's rectangle moves and otherwise merely
+    // clamps the offset it already has (TextFieldScrollerPosition.update), which leaves a draft
+    // taller than the page on the lines it was showing before the keyboard came up, with the caret
+    // below them: the person goes on typing into a field they cannot see the end of.
+    //
+    // The one public lever is the selection, because the caret's rectangle lives inside the field.
+    // Stepping the caret onto the newline before it scrolls that line into view; the frame after
+    // moves it back, and the offset already chosen is kept, since the offset is only recomputed
+    // when the caret's rectangle moves. The selection therefore ends exactly where it started and
+    // the text ends up where the person is typing. Nothing here touches a caret already at the top
+    // of the draft, or a selection that is not a caret: there is nothing below them to find.
+    val currentValue by rememberUpdatedState(value)
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val imeInsets = androidx.compose.foundation.layout.WindowInsets.ime
+    val imeDensity = androidx.compose.ui.platform.LocalDensity.current
+    // Read in composition so a moving keyboard recomposes this page: the height of what the
+    // keyboard has taken is the only signal that the field has been made shorter.
+    val imeBottom = imeInsets.getBottom(imeDensity)
+    var knownImeBottom by remember { mutableStateOf(0) }
+    // Keyed on the height rather than collecting a flow: every frame of the keyboard's rise is a
+    // new height, which cancels this effect and starts it again, so the delay below elapses only
+    // once the keyboard has stopped moving. Acting on the last frame instead would scroll against
+    // a height the field is about to lose again on the next one.
+    androidx.compose.runtime.LaunchedEffect(imeBottom) {
+        val risen = imeBottom > knownImeBottom
+        knownImeBottom = imeBottom
+        // A keyboard leaving is not an arrival. Neither is one that comes up with the page: the
+        // open effect above has already put the caret where the person left it, and stepping it
+        // there again is the nudge that used to lose the person's place.
+        if (!risen || !pageOpened) return@LaunchedEffect
+        kotlinx.coroutines.delay(ImeSettleMillis)
+        val text = currentValue.text
+        val caret = currentValue.selection.end.coerceIn(0, text.length)
+        val step = CaretRestore.stepTo(caret, currentValue.selection, text) ?: return@LaunchedEffect
+        currentOnValueChange(currentValue.copy(selection = TextRange(step)))
         androidx.compose.runtime.withFrameNanos { }
-        onValueChange(value.copy(selection = androidx.compose.ui.text.TextRange(caret)))
+        // Put the caret back only if the field still holds the draft this stepped through. A word
+        // the keyboard finished in that frame is a caret the field has already scrolled to, and
+        // writing this draft over it would undo the word rather than the nudge.
+        if (currentValue.text == text) {
+            currentOnValueChange(currentValue.copy(selection = TextRange(caret)))
+        }
     }
     DsFullScreenDialog(onDismissRequest = onDismiss, visibleState = visibleState, onWindowReady = onWindowReady) {
         // Every action the page has sits in this one bar, icon only: back on the leading edge, then
@@ -909,6 +966,14 @@ private fun FullScreenComposer(
         }
     }
 }
+
+/**
+ * How long the keyboard is given to finish taking its share of the full-screen page before the
+ * field is asked to scroll to the caret. It only has to outlast the IME's own rise animation,
+ * which is the ~200ms every soft keyboard on Android spends; a longer wait only makes the text
+ * arrive later, and a shorter one scrolls against a height the field is still giving up.
+ */
+private const val ImeSettleMillis = 260L
 
 /**
  * The permission preset chip.

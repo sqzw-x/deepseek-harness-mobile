@@ -14,11 +14,13 @@ import androidx.compose.ui.platform.LocalFocusManager
 /**
  * Lets a tap anywhere in a region clear a text selection made in it (issue #90).
  *
- * Every piece of selectable text in the transcript is its own `SelectionContainer`: one per
- * paragraph of a reply, one in each expanded Thinking panel, one in a diff. A container releases its
+ * Most selectable text in the transcript is its own `SelectionContainer`: one around a whole
+ * Markdown reply (see `MarkdownText`, which used to be one container per paragraph — a tap on the
+ * next paragraph of the same reply is now inside that container's own bounds and releases the
+ * selection itself), one in each expanded Thinking panel, one in a diff. A container releases its
  * selection in only two ways. A tap inside its own bounds does it, and so does losing focus. A tap
- * on the next paragraph, on the gap between two rows, on a card header or on any other row is
- * outside the container's bounds and does not move focus either, so the highlight, the handles and
+ * on another message's row, on the gap between two rows, on a card header or on anything else
+ * outside every container's bounds does not move focus either, so the highlight, the handles and
  * the Copy / Select all toolbar stayed up until something else happened to take focus.
  *
  * A selection holds focus while it is live, so the region's own gesture observer ends it the way the
